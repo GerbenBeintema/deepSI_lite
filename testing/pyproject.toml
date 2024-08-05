@@ -7,9 +7,15 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 py-modules = ["deepSI_lite"]
 
-[tool.poetry]
+[project]
 name = "deepSI_lite"
 version = "0.1.0"
 description = "Lightweight version of deepSI"
-authors = ["Gerben I. Beintema <g.i.beintema@tue.nl>"]
-license = "BSD 3-Clause"
+maintainers = [
+  {name = "Gerben I. Beintema"}
+]
+authors = [
+  {name = "Gerben I. Beintema"}
+]
+license = {file = "LICENSE"}
+readme = {file = "README.md", content-type = "text/markdown"}

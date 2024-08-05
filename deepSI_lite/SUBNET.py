@@ -3,7 +3,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 from torch import nn
 import torch
-from networks import MLP_res_net, RK4
+from deepSI_lite.networks import MLP_res_net, RK4
 from nonlinear_benchmarks import Input_output_data
 import numpy as np
 

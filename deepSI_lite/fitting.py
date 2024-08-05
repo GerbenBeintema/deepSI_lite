@@ -1,6 +1,6 @@
 
 import numpy as np
-from SUBNET import SUBNET, SUBNET_CT
+from deepSI_lite.SUBNET import SUBNET, SUBNET_CT
 import torch
 
 
@@ -29,7 +29,6 @@ def compute_NMS(*A) -> torch.Tensor:
 import cloudpickle, os
 from secrets import token_urlsafe
 from copy import deepcopy
-from fitting import data_batcher
 from tqdm.auto import tqdm
 def fit(model: SUBNET | SUBNET_CT, train, val, n_its, T=50, batch_size=256, stride=1, val_freq=500, optimizer=None, loss_fun=compute_NMS):
     code = token_urlsafe(4).replace('_','0').replace('-','a')
