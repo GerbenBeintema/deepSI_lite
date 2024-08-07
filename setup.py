@@ -7,7 +7,7 @@ with open('requirements.txt') as f:
 packages = [a for a in find_namespace_packages(where='.') if a[:6]=='deepSI_lite']
 
 setup(name = 'deepSI_lite',
-      version = '0.1.0',
+      version = '0.1.1',
       description = 'Deep Dynamical Model Estiamtion',
       author = 'Gerben I. Beintema',
       author_email = 'g.i.beintema@tue.nl',
