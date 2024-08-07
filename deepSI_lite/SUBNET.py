@@ -54,12 +54,6 @@ def validate_SUBNET_structure(model):
             if isinstance(model, SUBNET_CT):
                 xnext_test = model.integrator(model.f_CT, xtest, utest, torch.ones((1,)))
                 assert xnext_test.shape==(1,nx), f'integrator returned the incorrect shape it should be model.integrator(model.f_CT, x, u, Ts).shape==(nbatch=1, nx) but got {xnext_test.shape}'
-        elif isinstance(model, SUBNET_hf):
-            y_pred, xnext_test = model.hf(xtest, utest)
-            assert (y_pred.shape==(1,)) if ny=='scalar' else (y_pred.shape==(1,ny))
-            assert xnext_test.shape==(1,nx), f'f returned the incorrect shape it should be f(x, u).shape==(nbatch=1, nx) but got {xnext_test.shape}'
-            x_encoded = model.encoder(upast_test, ypast_test)
-            assert x_encoded.shape==(1,nx), f'encoder returned the incorrect shape it should be model.encoder(upast, ypast).shape==(nbatch=1, nx) but got {x_encoded.shape}'
         else:
             raise NotImplementedError(f'model validation of type {model} cannot be validated yet')
 
@@ -136,36 +130,10 @@ class SUBNET_CT(nn.Module):
     def encoder_unbached(self, upast, ypast):
         return self.encoder(upast[None],ypast[None])[0]
 
-class hf_default(nn.Module):
-    def __init__(self, nx, nu, ny, norm, feedthrough=False):
-        super().__init__()
-        self.f = norm.f(MLP_res_net(input_size = [nx , nu], output_size = nx))
-        self.h = norm.h(MLP_res_net(input_size = [nx , nu] if feedthrough else nx, output_size = ny))
-        self.feedthrough = feedthrough
-    
-    def forward(self, x, u):
-        y = self.h(x, u) if self.feedthrough else self.h(x)
-        x_next = self.f(x,u)
-        return y, x_next
 
-class SUBNET_hf(nn.Module): 
-    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, hf=None, encoder=None) -> None:
-        super().__init__()
-        self.nu, self.ny, self.norm, self.nx, self.nb, self.na = nu, ny, norm, nx, nb, na
-        self.hf = hf if hf is not None else hf_default(nx, nu, ny, norm, feedthrough=False)
-        self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
-        validate_SUBNET_structure(self)
-
+class Custom_SUBNET(nn.Module):
     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
-        return past_future_arrays(data, self.na, self.nb, T=T, stride=stride)
-
-    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
-        yfuture_sim = []
-        x = self.encoder(upast, ypast)
-        for u in ufuture.swapaxes(0,1):
-            y, x = self.hf(x,u)
-            yfuture_sim.append(y)
-        return torch.stack(yfuture_sim, dim=1)
+        return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=False)
 
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -173,31 +141,9 @@ class SUBNET_hf(nn.Module):
         ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False))[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
-    def hf_unbached(self, x, u):
-        return [z[0] for z in self.hf(x[None],u[None])]
-    def encoder_unbached(self, upast, ypast):
-        return self.encoder(upast[None],ypast[None])[0]
-
-class SUBNET_hf_CT(nn.Module):
-    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, hf_CT=None, integrator=None, encoder=None) -> None:
-        super().__init__()
-        self.nu, self.ny, self.norm, self.nx, self.nb, self.na = nu, ny, norm, nx, nb, na
-        assert hf_CT is not None
-        self.hf_CT = hf_CT if hf_CT is not None else hf_default(nx, nu, ny, norm, feedthrough=False)
-        self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
-        self.integrator = integrator if integrator is not None else RK4()
-
+class Custom_SUBNET_CT(nn.Module):
     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)
-
-    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, sampling_time: torch.Tensor, yfuture: torch.Tensor=None):
-        yfuture_sim = []
-        x = self.encoder(upast, ypast)
-        for u in ufuture.swapaxes(0,1):
-            y, _ = self.hf_CT(x,u)
-            x = self.integrator(lambda x,u: self.hf_CT(x,u)[1], x, u, sampling_time)
-            yfuture_sim.append(y)
-        return torch.stack(yfuture_sim, dim=1)
 
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -205,10 +151,36 @@ class SUBNET_hf_CT(nn.Module):
         ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True))[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
-    def hf_CT_unbached(self, x, u):
-        return [z[0] for z in self.hf_CT(x[None],u[None])]
-    def integrator_unbached(self, f_CT, x, u, sampling_time):
-        return self.integrator(f_CT, x[None], u[None], sampling_time[None])[0]
-    def encoder_unbached(self, upast, ypast):
-        return self.encoder(upast[None],ypast[None])[0]
+from deepSI_lite.networks import Bilinear
+class SUBNET_LPV(Custom_SUBNET):
+    def __init__(self, nu, ny, norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
+        #give warning if y0 and u0 are not close to zero!
+        #nu and ny only int
+        assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough
+        super().__init__()
+        self.nu, self.ny, self.norm, self.nx, self.np, self.na, self.nb, self.feedthrough = nu, ny, norm, nx, n_schedual, na, nb, feedthrough
+        self.A = A if A is not None else Bilinear(n_in=nx, n_out=nx, n_schedual=n_schedual)
+        self.B = B if B is not None else Bilinear(n_in=nu, n_out=nx, n_schedual=n_schedual, std_input=norm.ustd)
+        self.C = C if C is not None else Bilinear(n_in=nx, n_out=ny, n_schedual=n_schedual, std_output=norm.ystd)
+        self.D = D if D is not None else Bilinear(n_in=nu, n_out=ny, n_schedual=n_schedual, std_output=norm.ystd, std_input=norm.ustd)
+        self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
+        self.scheduling_net = scheduling_net if scheduling_net is not None else norm.f(MLP_res_net(input_size = [nx , nu], output_size = n_schedual))
+    
+    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+        mm = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
+        yfuture_sim = []
+        x = self.encoder(upast, ypast)
+        for u in ufuture.swapaxes(0,1):
+            p = self.scheduling_net(x, u)
+            A, B, C, D = self.A(p), self.B(p), self.C(p), self.D(p)
+            #A has shape (batch_size, nx, nx)
+            #B has shape (batch_size, nx, nu)
+            #C has shape (batch_size, ny, nx)
+            #D has shape (batch_size, ny, nu)
+            y = mm(C, x) + mm(D, u)
+            x = mm(A, x) + mm(B, u)
+            yfuture_sim.append(y)
+        return torch.stack(yfuture_sim, dim=1)
 
+# class SUBNET_koopman(Custom_SUBNET):
+#     def __init__(self, nu, )

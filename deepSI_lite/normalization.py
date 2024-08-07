@@ -3,25 +3,25 @@ import nonlinear_benchmarks
 import numpy as np
 import torch
 
-
+C = lambda x: torch.as_tensor(x, dtype=torch.float32)
 class IO_normalization_f(torch.nn.Module):
     def __init__(self, fun, umean, ustd):
         super().__init__()
-        self.fun, self.umean, self.ustd = fun, umean, ustd    
+        self.fun, self.umean, self.ustd = fun, C(umean), C(ustd)    
     def forward(self, x, u):
         return self.fun(x, (u-self.umean)/self.ustd)
 
 class IO_normalization_f_CT(torch.nn.Module):
     def __init__(self, fun, umean, ustd, tau):
         super().__init__()
-        self.fun, self.umean, self.ustd, self.tau = fun, umean, ustd, tau
+        self.fun, self.umean, self.ustd, self.tau = fun, C(umean), C(ustd), C(tau)
     def forward(self, x, u):
         return self.fun(x, (u-self.umean)/self.ustd)/self.tau
 
 class IO_normalization_h(torch.nn.Module):
     def __init__(self, fun, umean, ustd, ymean, ystd):
         super().__init__()
-        self.fun, self.umean, self.ustd, self.ymean, self.ystd = fun, umean, ustd, ymean, ystd
+        self.fun, self.umean, self.ustd, self.ymean, self.ystd = fun, C(umean), C(ustd), C(ymean), C(ystd)
     def forward(self, x, u=None):
         if u is None:
             y_normed = self.fun(x)
@@ -32,14 +32,14 @@ class IO_normalization_h(torch.nn.Module):
 class IO_normalization_encoder(torch.nn.Module):
     def __init__(self, fun, umean, ustd, ymean, ystd):
         super().__init__()
-        self.fun, self.umean, self.ustd, self.ymean, self.ystd = fun, umean, ustd, ymean, ystd
+        self.fun, self.umean, self.ustd, self.ymean, self.ystd = fun, C(umean), C(ustd), C(ymean), C(ystd)
     def forward(self, upast, ypast):
         return self.fun((upast-self.umean)/self.ustd, (ypast-self.ymean)/self.ystd)
 
 class Norm:
     def __init__(self, umean, ustd, ymean, ystd, sampling_time):
-        self.umean, self.ustd, self.ymean, self.ystd = umean, ustd, ymean, ystd
-        self.sampling_time = sampling_time
+        self.umean, self.ustd, self.ymean, self.ystd = C(umean), C(ustd), C(ymean), C(ystd)
+        self.sampling_time = C(sampling_time)
     
     def f(self, fun):
         return IO_normalization_f(fun, self.umean, self.ustd)

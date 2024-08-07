@@ -1,8 +1,6 @@
 
 import numpy as np
-from deepSI_lite.SUBNET import SUBNET, SUBNET_CT
 import torch
-
 
 def data_batcher(*arrays, batch_size=256, seed=0):
     rng = np.random.default_rng(seed=seed)
@@ -18,19 +16,28 @@ def data_batcher(*arrays, batch_size=256, seed=0):
             yield tuple(array[batch_perm] for array in arrays)
             start, end = start + batch_size, end + batch_size
 
-
-#given optimization
-#minimal!
-def compute_NMS(*A) -> torch.Tensor:
+def compute_NMSE(*A) -> torch.Tensor:
     model, *xarrays, yarray = A
     yout = model(*xarrays)
     return torch.mean((yout-yarray)**2/model.norm.ystd**2)
+
+def compute_clamp_NMSE(*A, NRMS_clamp_level=0.1, min_steps=None) -> torch.Tensor:
+    from math import ceil
+    model, *xarrays, yarray = A
+    yout = model(*xarrays)
+    errs = torch.mean((yout-yarray)**2/model.norm.ystd**2,dim=0) #[error step 0, error step 1, error step 2, ..]
+    if min_steps==None:
+        min_steps = ceil(model.nx/(model.ny if isinstance(model.ny,int) else 1))
+    return (torch.sum(errs[:min_steps]) + torch.sum(torch.clamp(errs[min_steps:],min=None, max=NRMS_clamp_level**2)))/len(errs)
 
 import cloudpickle, os
 from secrets import token_urlsafe
 from copy import deepcopy
 from tqdm.auto import tqdm
-def fit(model: SUBNET | SUBNET_CT, train, val, n_its, T=50, batch_size=256, stride=1, val_freq=500, optimizer=None, loss_fun=compute_NMS):
+from torch import nn, optim
+from nonlinear_benchmarks import Input_output_data
+def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:int, T:int=50, \
+        batch_size:int=256, stride:int=1, val_freq:int=500, optimizer:optim.Optimizer=None, loss_fun=compute_NMSE):
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
     optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer
@@ -38,10 +45,10 @@ def fit(model: SUBNET | SUBNET_CT, train, val, n_its, T=50, batch_size=256, stri
     arrays_val = model.create_arrays(val, T='sim')
     itter = data_batcher(*arrays, batch_size=batch_size)
     best_val, best_model, best_optimizer, loss_acc = float('inf'), deepcopy(model.state_dict()), deepcopy(optimizer.state_dict()), float('nan')
-    NRMS_val, NRMS_train = [], []
+    NRMS_val, NRMS_train = [], [] #initialize the train and val monitor
     try:
         for it_count, batch in zip(tqdm(range(n_its)), itter):
-            if it_count%val_freq==0:
+            if it_count%val_freq==0: ### Validation ###
                 NRMS_val.append((loss_fun(model, *arrays_val)).detach().numpy()**0.5)
                 NRMS_train.append((loss_acc/val_freq)**0.5)
                 if NRMS_val[-1]<=best_val:
@@ -50,6 +57,7 @@ def fit(model: SUBNET | SUBNET_CT, train, val, n_its, T=50, batch_size=256, stri
                                   'NRMS_train':np.array(NRMS_train),'last_optimizer':deepcopy(optimizer.state_dict())}, open(save_filename,'wb'))
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.4f} NRMS val {NRMS_val[-1]:.4f}{"!!" if NRMS_val[-1]==best_val else "  "}')
                 loss_acc = 0.
+            ### Train Step ###
             loss = loss_fun(model, *batch)
             optimizer.zero_grad()
             loss.backward()
