@@ -6,6 +6,7 @@ import torch
 from deepSI_lite.networks import MLP_res_net, RK4
 from nonlinear_benchmarks import Input_output_data
 import numpy as np
+from deepSI_lite.normalization import Norm
 
 def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
     if isinstance(data, list):
@@ -151,12 +152,31 @@ class Custom_SUBNET_CT(nn.Module):
         ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True))[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
+def validate_custom_SUBNET_structure(model):
+    nu, ny, na, nb = model.nu, model.ny, model.na, model.nb
+    for batch_size in [1,2]:
+        T = 10
+        v = lambda *size: torch.randn(size)
+        upast_test =  v(batch_size, nb) if nu=='scalar' else v(batch_size, nb, nu)
+        ypast_test = v(batch_size, na) if ny=='scalar' else v(batch_size, na, ny)
+        ufuture_test = v(batch_size, T) if nu=='scalar' else v(batch_size, T, nu)
+
+        with torch.no_grad():
+            if isinstance(model, Custom_SUBNET):
+                yfuture_pred = model(upast_test, ypast_test, ufuture_test)
+            else:
+                yfuture_pred = model(upast_test, ypast_test, ufuture_test, v(batch_size))
+            assert yfuture_pred.shape==((batch_size,T) if ny=='scalar' else (batch_size,T,ny))
+
+
+
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
-    def __init__(self, nu, ny, norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
-        #give warning if y0 and u0 are not close to zero!
-        #nu and ny only int
-        assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough
+    def __init__(self, nu, ny, norm:Norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
+        if np.any(10*abs(norm.y0)>norm.ystd) or np.any(10*abs(norm.umean)>norm.ustd):
+            from warnings import warn
+            warn('SUBNET_LPV assumes that the data is approximatly zero mean. Not doing so can lead to unintended behaviour.')
+        assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough, 'SUBNET_LPV requires the input, output schedualing parameter to be vectors and feedthrough to be present'
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.np, self.na, self.nb, self.feedthrough = nu, ny, norm, nx, n_schedual, na, nb, feedthrough
         self.A = A if A is not None else Bilinear(n_in=nx, n_out=nx, n_schedual=n_schedual)
@@ -165,22 +185,16 @@ class SUBNET_LPV(Custom_SUBNET):
         self.D = D if D is not None else Bilinear(n_in=nu, n_out=ny, n_schedual=n_schedual, std_output=norm.ystd, std_input=norm.ustd)
         self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
         self.scheduling_net = scheduling_net if scheduling_net is not None else norm.f(MLP_res_net(input_size = [nx , nu], output_size = n_schedual))
+        validate_custom_SUBNET_structure(self) #does checks if forward is working as intended
     
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
-        mm = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
+        mv = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
         yfuture_sim = []
         x = self.encoder(upast, ypast)
-        for u in ufuture.swapaxes(0,1):
+        for u in ufuture.swapaxes(0,1): #iterate over time
             p = self.scheduling_net(x, u)
             A, B, C, D = self.A(p), self.B(p), self.C(p), self.D(p)
-            #A has shape (batch_size, nx, nx)
-            #B has shape (batch_size, nx, nu)
-            #C has shape (batch_size, ny, nx)
-            #D has shape (batch_size, ny, nu)
-            y = mm(C, x) + mm(D, u)
-            x = mm(A, x) + mm(B, u)
+            y = mv(C, x) + mv(D, u)
+            x = mv(A, x) + mv(B, u)
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
-
-# class SUBNET_koopman(Custom_SUBNET):
-#     def __init__(self, nu, )

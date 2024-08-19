@@ -2,4 +2,4 @@ import deepSI_lite.SUBNET
 import deepSI_lite.fitting
 import deepSI_lite.networks
 import deepSI_lite.normalization
-
+from nonlinear_benchmarks import Input_output_data

@@ -16,11 +16,6 @@ def data_batcher(*arrays, batch_size=256, seed=0):
             yield tuple(array[batch_perm] for array in arrays)
             start, end = start + batch_size, end + batch_size
 
-def compute_NMSE(*A) -> torch.Tensor:
-    model, *xarrays, yarray = A
-    yout = model(*xarrays)
-    return torch.mean((yout-yarray)**2/model.norm.ystd**2)
-
 def compute_clamp_NMSE(*A, NRMS_clamp_level=0.1, min_steps=None) -> torch.Tensor:
     from math import ceil
     model, *xarrays, yarray = A
@@ -29,6 +24,11 @@ def compute_clamp_NMSE(*A, NRMS_clamp_level=0.1, min_steps=None) -> torch.Tensor
     if min_steps==None:
         min_steps = ceil(model.nx/(model.ny if isinstance(model.ny,int) else 1))
     return (torch.sum(errs[:min_steps]) + torch.sum(torch.clamp(errs[min_steps:],min=None, max=NRMS_clamp_level**2)))/len(errs)
+
+def compute_NMSE(*A) -> torch.Tensor:
+    model, *xarrays, yarray = A
+    yout = model(*xarrays)
+    return torch.mean((yout-yarray)**2/model.norm.ystd**2)
 
 import cloudpickle, os
 from secrets import token_urlsafe
