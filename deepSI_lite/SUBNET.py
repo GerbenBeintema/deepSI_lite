@@ -27,13 +27,13 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
         yfuture.append(y[i-T:i])
         upast.append(u[i-T-nb:i-T])
         ypast.append(y[i-T-na:i-T])
+
     s = lambda x: torch.as_tensor(np.stack(x,axis=0))
     if not add_sampling_time:
         return s(upast), s(ypast), s(ufuture), s(yfuture)
     else:
         sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
         return s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)
-
 
 def validate_SUBNET_structure(model):
     nx, nu, ny, na, nb = model.nx, model.nu, model.ny, model.na, model.nb
@@ -59,7 +59,7 @@ def validate_SUBNET_structure(model):
             raise NotImplementedError(f'model validation of type {model} cannot be validated yet')
 
 class SUBNET(nn.Module):
-    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, f=None, h=None, encoder=None, feedthrough=False) -> None:
+    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, f=None, h=None, encoder=None, feedthrough=False) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
         self.f = f if f is not None else norm.f(MLP_res_net(input_size = [nx , nu], output_size = nx))
@@ -70,7 +70,8 @@ class SUBNET(nn.Module):
     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride)
 
-    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+    def forward_simple(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+        #is a lot simplier but also about 50% slower
         yfuture_sim = []
         x = self.encoder(upast, ypast)
         for u in ufuture.swapaxes(0,1):
@@ -78,6 +79,19 @@ class SUBNET(nn.Module):
             yfuture_sim.append(y)
             x = self.f(x,u)
         return torch.stack(yfuture_sim, dim=1)
+
+    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+        x = self.encoder(upast, ypast)
+        xfuture = []
+        for u in ufuture.swapaxes(0,1): #unroll over time dim
+            xfuture.append(x)
+            x = self.f(x,u)
+        xfuture = torch.stack(xfuture,dim=1) #has shape (Nbatch, Ntime=T, nx)
+
+        #compute output at all the future time indecies at the same time by combining the time and batch dim.
+        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim
+        yfuture_sim = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        return yfuture_sim.view(*((xfuture.shape[:2])+ypast.shape[2:])) #shape back to (Nbatch, T, ny)
 
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -108,13 +122,16 @@ class SUBNET_CT(nn.Module):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)
 
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, sampling_time : float | torch.Tensor, yfuture: torch.Tensor=None):
-        yfuture_sim = []
+        # yfuture_sim = []
         x = self.encoder(upast, ypast)
+        xfuture = []
         for u in ufuture.swapaxes(0,1):
-            y = self.h(x,u) if self.feedthrough else self.h(x)
-            yfuture_sim.append(y)
+            xfuture.append(x)
             x = self.integrator(self.f_CT, x, u, sampling_time)
-        return torch.stack(yfuture_sim, dim=1)
+        
+        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim
+        yfuture_sim = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        return yfuture_sim.view(*((xfuture.shape[:2])+ypast.shape[2:])) #shape to (Nb, T, ny)
     
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -198,3 +215,16 @@ class SUBNET_LPV(Custom_SUBNET):
             x = mv(A, x) + mv(B, u)
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
+
+
+
+# from deepSI_lite.networks import CNN_chained_upscales, CNN_chained_downscales
+
+# class SUBNET_CNN(Custom_SUBNET):
+#     def __init__(self, nu, output_image_shape, norm:Norm, nx, na, nb, encoder=None, f=None, h=None, feedthrough=False)
+#         super().__init__()
+#         self.h = norm.h(CNN_chained_upscales(nx, output_image_shape, nu=-1 if feedthrough else nu, feature_scale_factor=1.5))
+#         self.encoder = CNN_chained_downscales(output_image_shape, )
+
+#     def create_dataiter(self, data: Input_output_data | list, T : int=50, stride: int=1):
+#         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)

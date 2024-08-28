@@ -4,8 +4,8 @@ deepSI\_lite a lightweight and flexible implementation of the SUBNET structure f
 
 ## todo list
 
-* Check if it can be installed with pip install and pyproject.toml
-* Example notebook
+* Create Example notebook
+* CT with sample_time = None?
 * multi variate ny=int and norm  
 * Validate implementation with re-running of old results
 * General documentation 

@@ -118,3 +118,216 @@ class LPV_SS(nn.Module):
         x_next = self.state_LPV(x, u, p=p)
         return y, x_next
 
+class ConvShuffle(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding='same', upscale_factor=2, \
+        padding_mode='zeros'):
+        super(ConvShuffle, self).__init__()
+        self.upscale_factor = upscale_factor
+        self.conv = nn.Conv2d(in_channels, out_channels*upscale_factor**2, kernel_size, padding=padding, \
+            padding_mode=padding_mode)
+    
+    def forward(self, X):
+        X = self.conv(X) #(N, Cout*upscale**2, H, W)
+        return nn.functional.pixel_shuffle(X, self.upscale_factor) #(N, Cin, H*r, W*r)
+
+
+class Upscale_Conv_block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding='same', \
+                 upscale_factor=2, main_upscale=ConvShuffle, shortcut=ConvShuffle, \
+                 padding_mode='zeros', activation=nn.functional.relu, Ch=0, Cw=0):
+        assert isinstance(upscale_factor, int)
+        super(Upscale_Conv_block, self).__init__()
+        #padding='valid' is weird????
+        self.shortcut = shortcut(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode, upscale_factor=upscale_factor)
+        self.activation = activation
+        self.upscale = main_upscale(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode, upscale_factor=upscale_factor)
+        self.conv = nn.Conv2d(out_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode)
+        self.Ch = Ch
+        self.Cw = Cw
+        
+    def forward(self, X):
+        #shortcut
+        X_shortcut = self.shortcut(X) # (N, Cout, H*r, W*r)
+        
+        #main line
+        X = self.activation(X) # (N, Cin, H, W)
+        X = self.upscale(X)    # (N, Cout, H*r, W*r)
+        X = self.activation(X) # (N, Cout, H*r, W*r)
+        X = self.conv(X)       # (N, Cout, H*r, W*r)
+        
+        #combine
+        # X.shape[:,Cout,H,W]
+        H,W = X.shape[2:]
+        H2,W2 = X_shortcut.shape[2:]
+        if H2>H or W2>W:
+            padding_height = (H2-H)//2
+            padding_width = (W2-W)//2
+            X = X + X_shortcut[:,:,padding_height:padding_height+H,padding_width:padding_width+W]
+        else:
+            X = X + X_shortcut
+        return X[:,:,self.Ch:,self.Cw:] #slice if needed
+        #Nnodes = W*H*N(Cout*4*r**2 + Cin)
+
+class CNN_chained_upscales(nn.Module):
+    def __init__(self, nx, ny, nu=-1, features_out = 1, kernel_size=3, padding='same', \
+                 upscale_factor=2, feature_scale_factor=2, final_padding=4, main_upscale=ConvShuffle, shortcut=ConvShuffle, \
+                 padding_mode='zeros', activation=nn.functional.relu):
+        super(CNN_chained_upscales, self).__init__()
+        self.feedthrough = nu!=-1
+        if self.feedthrough:
+            self.nu = tuple() if nu is None else ((nu,) if isinstance(nu,int) else nu)
+            FCnet_in = nx + np.prod(self.nu, dtype=int)
+        else:
+            FCnet_in = nx
+        
+        self.activation  = activation
+        assert isinstance(ny,(list,tuple)) and (len(ny)==2 or len(ny)==3), 'ny should have 2 or 3 dimentions in the form (nchannels, height, width) or (height, width)'
+        if len(ny)==2:
+            self.nchannels = 1
+            self.None_nchannels = True
+            self.height_target, self.width_target = ny
+        else:
+            self.None_nchannels = False
+            self.nchannels, self.height_target, self.width_target = ny
+        
+        if self.nchannels>self.width_target or self.nchannels>self.height_target:
+            import warnings
+            text = f"Interpreting shape of data as (Nnchannels={self.nchannels}, Nheight={self.height_target}, Nwidth={self.width_target}), This might not be what you intended!"
+            warnings.warn(text)
+
+        #work backwards
+        features_out = int(features_out*self.nchannels)
+        self.final_padding = final_padding
+        height_now = self.height_target + 2*self.final_padding
+        width_now  = self.width_target  + 2*self.final_padding
+        features_now = features_out
+        
+        self.upblocks = []
+        while height_now>=2*upscale_factor+1 and width_now>=2*upscale_factor+1:
+            
+            Ch = (-height_now)%upscale_factor
+            Cw = (-width_now)%upscale_factor
+            # print(height_now, width_now, features_now, Ch, Cw)
+            B = Upscale_Conv_block(int(features_now*feature_scale_factor), int(features_now), kernel_size, padding=padding, \
+                 upscale_factor=upscale_factor, main_upscale=main_upscale, shortcut=shortcut, \
+                 padding_mode=padding_mode, activation=activation, Cw=Cw, Ch=Ch)
+            self.upblocks.append(B)
+            features_now *= feature_scale_factor
+            #implement slicing 
+            
+            height_now += Ch
+            width_now += Cw
+            height_now //= upscale_factor
+            width_now //= upscale_factor
+        # print(height_now, width_now, features_now)
+        self.width0 = width_now
+        self.height0 = height_now
+        self.features0 = int(features_now)
+        
+        self.upblocks = nn.Sequential(*list(reversed(self.upblocks)))
+        self.FC = MLP_res_net(n_in=FCnet_in,n_out=self.width0*self.height0*self.features0, n_hidden_layers=1)
+        self.final_conv = nn.Conv2d(features_out, self.nchannels, kernel_size=3, padding=padding, padding_mode='zeros')
+        
+    def forward(self, x, u=None):
+        if self.feedthrough:
+            xu = torch.cat([x,u.view(u.shape[0],-1)],dim=1)
+        else:
+            xu = x
+        X = self.FC(xu).view(-1, self.features0, self.height0, self.width0) 
+        X = self.upblocks(X)
+        X = self.activation(X)
+        Xout = self.final_conv(X)
+        if self.final_padding>0:
+            Xout = Xout[:,:,self.final_padding:-self.final_padding,self.final_padding:-self.final_padding]
+        return Xout[:,0,:,:] if self.None_nchannels else Xout
+
+class ShuffleConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding='same', upscale_factor=2, padding_mode='zeros'):
+        super(ShuffleConv, self).__init__()
+        self.upscale_factor = upscale_factor
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode) #kernal larger?
+    
+    def forward(self, X):
+        X = torch.cat([X]*self.upscale_factor**2,dim=1) #(N, Cin*r**2, H, W)
+        X = nn.functional.pixel_shuffle(X, self.upscale_factor)  #(N, Cin, H*r, W*r)
+        return self.conv(X)
+        
+class ClassicUpConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding='same', upscale_factor=2, padding_mode='zeros'):
+        super(ClassicUpConv, self).__init__()
+        self.upscale_factor = upscale_factor
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode) #kernal larger?
+        self.up = nn.Upsample(size=None,scale_factor=upscale_factor,mode='bicubic',align_corners=False)
+
+    def forward(self, X):
+        X = self.up(X) #(N, Cin, H*r, W*r)
+        return self.conv(X)
+
+class Down_Conv_block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding='same', \
+                 downscale_factor=2, padding_mode='zeros', activation=nn.functional.relu):
+        assert isinstance(downscale_factor, int)
+        super(Down_Conv_block, self).__init__()
+        #padding='valid' is weird????
+        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode, stride=downscale_factor)
+        self.activation = activation
+        self.conv = nn.Conv2d(in_channels, in_channels, kernel_size, padding='same', padding_mode='zeros')
+        self.downscale = nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, padding_mode=padding_mode, stride=downscale_factor)
+        
+    def forward(self, X):
+        #shortcut
+        X_shortcut = self.shortcut(X) # (N, Cout, H/r, W/r)
+        
+        #main line
+        X = self.activation(X)  # (N, Cin, H, W)
+        X = self.conv(X)        # (N, Cout, H, W)
+        X = self.activation(X)  # (N, Cout, H, W)
+        X = self.downscale(X)   # (N, Cout, H/r, W/r)
+        
+        #combine
+        X = X + X_shortcut
+        return X
+
+class CNN_chained_downscales(nn.Module):
+    def __init__(self, ny, kernel_size=3, padding='valid', features_ups_factor=1.5, \
+                 downscale_factor=2, padding_mode='zeros', activation=nn.functional.relu):
+
+        super(CNN_chained_downscales, self).__init__()
+        self.activation  = activation
+        assert isinstance(ny,(list,tuple)) and (len(ny)==2 or len(ny)==3), 'ny should have 2 or 3 dimentions in the form (nchannels, height, width) or (height, width)'
+        if len(ny)==2:
+            self.nchannels = 1
+            self.None_nchannels = True
+            self.height, self.width = ny
+        else:
+            self.None_nchannels = False
+            self.nchannels, self.height, self.width = ny
+        
+        #work backwards
+        Y = torch.randn((1,self.nchannels,self.height,self.width))
+        _, features_now, height_now, width_now = Y.shape
+        
+        self.downblocks = []
+        features_now_base = features_now
+        while height_now>=2*downscale_factor+1 and width_now>=2*downscale_factor+1:
+            features_now_base *= features_ups_factor
+            B = Down_Conv_block(features_now, int(features_now_base), kernel_size, padding=padding, \
+                 downscale_factor=downscale_factor, padding_mode=padding_mode, activation=activation)
+            
+            self.downblocks.append(B)
+            with torch.no_grad():
+                Y = B(Y)
+            _, features_now, height_now, width_now = Y.shape #i'm lazy sorry
+
+        self.width0 = width_now
+        self.height0 = height_now
+        self.features0 = features_now
+        self.nout = self.width0*self.height0*self.features0
+        # print('CNN output size=',self.nout)
+        self.downblocks = nn.Sequential(*self.downblocks)
+        
+    def forward(self, Y):
+        if self.None_nchannels:
+            Y = Y[:,None,:,:]
+        return self.downblocks(Y).view(Y.shape[0],-1)
+    

@@ -50,7 +50,6 @@ class Norm:
     def f_CT(self, fun, tau):
         return IO_normalization_f_CT(fun, self.umean, self.ustd, tau)
 
-
 def get_nu_ny_and_auto_norm(data: nonlinear_benchmarks.Input_output_data | list):
     if not isinstance(data, list):
         data = [data]
