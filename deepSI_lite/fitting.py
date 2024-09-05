@@ -38,11 +38,11 @@ from torch import nn, optim
 from nonlinear_benchmarks import Input_output_data
 import time
 def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:int, T:int=50, \
-        batch_size:int=256, stride:int=1, val_freq:int=500, optimizer:optim.Optimizer=None, loss_fun=compute_NMSE):
+        batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, loss_fun=compute_NMSE):
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
     optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer
-    arrays = model.create_arrays(train, T=T, stride=stride)
+    arrays = model.create_arrays(train, T=T, stride=stride) #torch arrays
     arrays_val = model.create_arrays(val, T='sim')
     itter = data_batcher(*arrays, batch_size=batch_size)
     best_val, best_model, best_optimizer, loss_acc = float('inf'), deepcopy(model.state_dict()), deepcopy(optimizer.state_dict()), float('nan')
