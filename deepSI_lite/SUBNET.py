@@ -10,30 +10,64 @@ from deepSI_lite.normalization import Norm
 
 def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
     if isinstance(data, list):
-        if T=='sim':
-            L = len(data[0])
-            assert all(L==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
-        out = [past_future_arrays(d, na, nb, T, add_sampling_time=add_sampling_time) for d in data]
-        return [torch.cat(o) for o in zip(*out)]
+        return past_future_arrays_list(data, na, nb, T, stride=stride, add_sampling_time=add_sampling_time)
     
     u, y = np.array(data.u, dtype=np.float32), np.array(data.y, dtype=np.float32)
     if T=='sim':
         T = len(u) - max(na, nb)
-    k0 = (T + max(na, nb))
-    ufuture, yfuture, upast, ypast = [], [], [], []
-    for k in range(0, len(u) + 1 - k0, stride):
-        i = k + k0
-        ufuture.append(u[i-T:i])
-        yfuture.append(y[i-T:i])
-        upast.append(u[i-T-nb:i-T])
-        ypast.append(y[i-T-na:i-T])
 
-    s = lambda x: torch.as_tensor(np.stack(x,axis=0))
+    def window(x,window_shape=T):
+        x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape, axis=0, writeable=True)
+        s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
+        return x.transpose(s) #makes the second dim the time dim instaed of the last dim
+   
+    npast = max(na, nb)
+    ufuture = window(u[npast:], window_shape=T) #using sliding_window_view for memory efficentcy (does not create a copy of the data)
+    yfuture = window(y[npast:], window_shape=T)
+    upast = window(u[npast-nb:len(u)-T], window_shape=nb)
+    ypast = window(y[npast-na:len(y)-T], window_shape=na)
+    
+    s = torch.as_tensor
     if not add_sampling_time:
-        return s(upast), s(ypast), s(ufuture), s(yfuture)
+        return (s(upast), s(ypast), s(ufuture), s(yfuture)), np.arange(len(upast))
     else:
         sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
-        return s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)
+        return (s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)), np.arange(len(upast))
+
+
+def past_future_arrays_list(data : list, na, nb, T, stride=1, add_sampling_time=False):
+
+    if T=='sim':
+        L = len(data[0])
+        assert all(L==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
+        T = len(L) - max(na, nb)
+    u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32)
+
+    def window(x,window_shape=T):
+        x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True)
+        s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
+        return x.transpose(s)
+   
+    npast = max(na, nb)
+    ufuture = window(u[npast:len(u)], window_shape=T)
+    yfuture = window(y[npast:len(y)], window_shape=T)
+    upast = window(u[npast-nb:len(u)-T], window_shape=nb)
+    ypast = window(y[npast-na:len(y)-T], window_shape=na)
+    acc_L, ids = 0, []
+    for d in data:
+        assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'
+        ids.append(np.arange(0,len(d.u)-npast-T+1, stride)+acc_L) #only add ids which are valid for training (no overlap between the different datasets)
+        acc_L += len(d.u)
+    ids = np.concatenate(ids)
+
+    s = torch.as_tensor
+    if not add_sampling_time:
+        return (s(upast), s(ypast), s(ufuture), s(yfuture)), ids #this could return all the valid ids
+    else:
+        sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
+        return (s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)), ids
+
+
 
 def validate_SUBNET_structure(model):
     nx, nu, ny, na, nb = model.nx, model.nu, model.ny, model.na, model.nb
@@ -81,6 +115,7 @@ class SUBNET(nn.Module):
         return torch.stack(yfuture_sim, dim=1)
 
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+        B, T = ufuture.shape[:2]
         x = self.encoder(upast, ypast)
         xfuture = []
         for u in ufuture.swapaxes(0,1): #unroll over time dim
@@ -89,9 +124,9 @@ class SUBNET(nn.Module):
         xfuture = torch.stack(xfuture,dim=1) #has shape (Nbatch, Ntime=T, nx)
 
         #compute output at all the future time indecies at the same time by combining the time and batch dim.
-        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim
-        yfuture_sim = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
-        return yfuture_sim.view(*((xfuture.shape[:2])+ypast.shape[2:])) #shape back to (Nbatch, T, ny)
+        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim 
+        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T) -> (Nbatch, T)
 
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -122,16 +157,18 @@ class SUBNET_CT(nn.Module):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)
 
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, sampling_time : float | torch.Tensor, yfuture: torch.Tensor=None):
-        # yfuture_sim = []
+        B, T = ufuture.shape[:2]
         x = self.encoder(upast, ypast)
         xfuture = []
         for u in ufuture.swapaxes(0,1):
             xfuture.append(x)
             x = self.integrator(self.f_CT, x, u, sampling_time)
-        
-        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim
-        yfuture_sim = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
-        return yfuture_sim.view(*((xfuture.shape[:2])+ypast.shape[2:])) #shape to (Nb, T, ny)
+        xfuture = torch.stack(xfuture,dim=1) #has shape (Nbatch, Ntime=T, nx)
+
+        #compute output at all the future time indecies at the same time by combining the time and batch dim.
+        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim 
+        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T) -> (Nbatch, T)
     
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
@@ -185,8 +222,6 @@ def validate_custom_SUBNET_structure(model):
                 yfuture_pred = model(upast_test, ypast_test, ufuture_test, v(batch_size))
             assert yfuture_pred.shape==((batch_size,T) if ny=='scalar' else (batch_size,T,ny))
 
-
-
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
     def __init__(self, nu, ny, norm:Norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
@@ -216,15 +251,9 @@ class SUBNET_LPV(Custom_SUBNET):
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
 
+# this is possible:
+# The data should allow for it though
+# class SUBNET_non_uniform_sampled(nn.Module):
+#     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
+#         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=False)
 
-
-# from deepSI_lite.networks import CNN_chained_upscales, CNN_chained_downscales
-
-# class SUBNET_CNN(Custom_SUBNET):
-#     def __init__(self, nu, output_image_shape, norm:Norm, nx, na, nb, encoder=None, f=None, h=None, feedthrough=False)
-#         super().__init__()
-#         self.h = norm.h(CNN_chained_upscales(nx, output_image_shape, nu=-1 if feedthrough else nu, feature_scale_factor=1.5))
-#         self.encoder = CNN_chained_downscales(output_image_shape, )
-
-#     def create_dataiter(self, data: Input_output_data | list, T : int=50, stride: int=1):
-#         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)

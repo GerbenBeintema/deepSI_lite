@@ -14,3 +14,4 @@ model = SUBNET(nu, ny, norm=norm, nx=nx, nb=40, na=40, f=None, h=None, encoder=N
 from deepSI_lite.fitting import fit
 train_dict = fit(model, train, val, n_its=1_000_000, T=80, batch_size=128, stride=1, val_freq=100)
 
+# train_dict = fit(model, [train[:1000], train[2000:3000], train[10:10+80+40], train[20:200]], val, n_its=1_000_000, T=80, batch_size=128, stride=1, val_freq=100)
