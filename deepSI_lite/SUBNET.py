@@ -12,7 +12,8 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
     if isinstance(data, list):
         return past_future_arrays_list(data, na, nb, T, stride=stride, add_sampling_time=add_sampling_time)
     
-    u, y = np.array(data.u, dtype=np.float32), np.array(data.y, dtype=np.float32)
+    u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False) #does not do a copy if the dtype is already correct
+
     if T=='sim':
         T = len(u) - max(na, nb)
 
@@ -41,7 +42,7 @@ def past_future_arrays_list(data : list, na, nb, T, stride=1, add_sampling_time=
         L = len(data[0])
         assert all(L==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
         T = len(L) - max(na, nb)
-    u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32)
+    u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32) #this always creates a copy
 
     def window(x,window_shape=T):
         x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True)
@@ -53,6 +54,7 @@ def past_future_arrays_list(data : list, na, nb, T, stride=1, add_sampling_time=
     yfuture = window(y[npast:len(y)], window_shape=T)
     upast = window(u[npast-nb:len(u)-T], window_shape=nb)
     ypast = window(y[npast-na:len(y)-T], window_shape=na)
+    
     acc_L, ids = 0, []
     for d in data:
         assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'

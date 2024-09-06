@@ -62,7 +62,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
     optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer
-    arrays, indices = model.create_arrays(train, T=T, stride=stride) #how to introduce ids here?
+    arrays, indices = model.create_arrays(train, T=T, stride=stride) 
     print(f'Number of samples to train on = {len(indices)}')
     itter = data_batcher(*arrays, batch_size=batch_size, indices=indices)
 
