@@ -102,10 +102,11 @@ def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: 
         optimizer: optim.Optimizer = None, loss_fun = compute_NMSE):
 
     optimizer = torch.optim.Adam(model.parameters()) if optimizer is None else optimizer
-    arrays = model.create_arrays(train, T=T, stride=stride)  # Training data with T and stride
-    arrays_val = model.create_arrays(val, T=T)  # Validation data
-    itter = data_batcher(*arrays, batch_size=batch_size)  # Data batches
-
+    arrays, indices = model.create_arrays(train, T=T, stride=stride)  # Training data with T and stride
+    itter = data_batcher(*arrays, batch_size=batch_size, indices=indices)  # Data batches
+    arrays_val, indices = model.create_arrays(val, T=T)  # Validation data
+    arrays_val = [a[indices] for a in arrays_val]
+    
     best_val, best_model = float('inf'), deepcopy(model.state_dict())  # Track the best model
     
     for it_count, batch in zip(tqdm(range(n_its)), itter):

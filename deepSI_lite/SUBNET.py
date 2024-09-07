@@ -9,58 +9,38 @@ import numpy as np
 from deepSI_lite.normalization import Norm
 
 def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
+    if T=='sim':
+        if isinstance(data, list):
+            assert all(len(data[0])==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
+            T = len(data[0]) - max(na, nb)
+        else:
+            T = len(data) - max(na, nb)
+    
     if isinstance(data, list):
-        return past_future_arrays_list(data, na, nb, T, stride=stride, add_sampling_time=add_sampling_time)
-    
-    u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False) #does not do a copy if the dtype is already correct
-
-    if T=='sim':
-        T = len(u) - max(na, nb)
-
-    def window(x,window_shape=T):
-        x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape, axis=0, writeable=True)
-        s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
-        return x.transpose(s) #makes the second dim the time dim instaed of the last dim
-   
-    npast = max(na, nb)
-    ufuture = window(u[npast:], window_shape=T) #using sliding_window_view for memory efficentcy (does not create a copy of the data)
-    yfuture = window(y[npast:], window_shape=T)
-    upast = window(u[npast-nb:len(u)-T], window_shape=nb)
-    ypast = window(y[npast-na:len(y)-T], window_shape=na)
-    
-    s = torch.as_tensor
-    if not add_sampling_time:
-        return (s(upast), s(ypast), s(ufuture), s(yfuture)), np.arange(len(upast))
+        u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32) #this always creates a copy
     else:
-        sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
-        return (s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)), np.arange(len(upast))
+        u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False)
 
-
-def past_future_arrays_list(data : list, na, nb, T, stride=1, add_sampling_time=False):
-
-    if T=='sim':
-        L = len(data[0])
-        assert all(L==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
-        T = len(L) - max(na, nb)
-    u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32) #this always creates a copy
-
-    def window(x,window_shape=T):
+    def window(x,window_shape=T): #this is some duplicate code can be optimized
         x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True)
         s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
         return x.transpose(s)
-   
+
     npast = max(na, nb)
     ufuture = window(u[npast:len(u)], window_shape=T)
     yfuture = window(y[npast:len(y)], window_shape=T)
     upast = window(u[npast-nb:len(u)-T], window_shape=nb)
     ypast = window(y[npast-na:len(y)-T], window_shape=na)
-    
-    acc_L, ids = 0, []
-    for d in data:
-        assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'
-        ids.append(np.arange(0,len(d.u)-npast-T+1, stride)+acc_L) #only add ids which are valid for training (no overlap between the different datasets)
-        acc_L += len(d.u)
-    ids = np.concatenate(ids)
+
+    if isinstance(data, list):
+        acc_L, ids = 0, []
+        for d in data:
+            assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'
+            ids.append(np.arange(0,len(d.u)-npast-T+1, stride)+acc_L) #only add ids which are valid for training (no overlap between the different datasets)
+            acc_L += len(d.u)
+        ids = np.concatenate(ids)
+    else:
+        ids = np.arange(len(data)-npast-T+1)
 
     s = torch.as_tensor
     if not add_sampling_time:
@@ -68,8 +48,6 @@ def past_future_arrays_list(data : list, na, nb, T, stride=1, add_sampling_time=
     else:
         sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
         return (s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)), ids
-
-
 
 def validate_SUBNET_structure(model):
     nx, nu, ny, na, nb = model.nx, model.nu, model.ny, model.na, model.nb
@@ -95,13 +73,14 @@ def validate_SUBNET_structure(model):
             raise NotImplementedError(f'model validation of type {model} cannot be validated yet')
 
 class SUBNET(nn.Module):
-    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, f=None, h=None, encoder=None, feedthrough=False) -> None:
+    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, f=None, h=None, encoder=None, feedthrough=False, validate=True) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
         self.f = f if f is not None else norm.f(MLP_res_net(input_size = [nx , nu], output_size = nx))
         self.h = h if h is not None else norm.h(MLP_res_net(input_size = [nx , nu] if feedthrough else nx, output_size = ny))
         self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
-        validate_SUBNET_structure(self)
+        if validate:
+            validate_SUBNET_structure(self)
 
     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride)
@@ -146,14 +125,15 @@ class SUBNET(nn.Module):
 
 class SUBNET_CT(nn.Module):
     #both norm, base_sampling_time have a sample time 
-    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, f_CT=None, h=None, encoder=None, integrator=None, feedthrough=False) -> None:
+    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, f_CT=None, h=None, encoder=None, integrator=None, feedthrough=False, validate=True) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
         self.f_CT = f_CT if f_CT is not None else norm.f_CT(MLP_res_net(input_size = [nx , nu], output_size = nx), tau=norm.sampling_time*50)
         self.h = h if h is not None else norm.h(MLP_res_net(input_size = [nx , nu] if feedthrough else nx, output_size = ny))
         self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
         self.integrator = integrator if integrator is not None else RK4()
-        validate_SUBNET_structure(self)
+        if validate:
+            validate_SUBNET_structure(self)
 
     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=True)
@@ -224,6 +204,10 @@ def validate_custom_SUBNET_structure(model):
                 yfuture_pred = model(upast_test, ypast_test, ufuture_test, v(batch_size))
             assert yfuture_pred.shape==((batch_size,T) if ny=='scalar' else (batch_size,T,ny))
 
+##################
+####### LPV ######
+##################
+
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
     def __init__(self, nu, ny, norm:Norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
@@ -259,3 +243,6 @@ class SUBNET_LPV(Custom_SUBNET):
 #     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
 #         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=False)
 
+##################
+####### LPV ######
+##################

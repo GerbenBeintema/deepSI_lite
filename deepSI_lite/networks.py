@@ -100,7 +100,7 @@ class LPV_layer(nn.Module):
         return y[:,0] if self.sqeeze_output else y
 
 #problems: 
-# pnet depdent on nu?
+# pnet depdent on u?
 # what to do with exernally schedualed?
 
 class LPV_SS(nn.Module):
@@ -117,6 +117,12 @@ class LPV_SS(nn.Module):
         y = self.output_LPV(x, u, p=p) #might be depent on feedthrough
         x_next = self.state_LPV(x, u, p=p)
         return y, x_next
+
+
+####################
+###  CNN SUBNET ####
+####################
+
 
 class ConvShuffle(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding='same', upscale_factor=2, \
@@ -168,11 +174,11 @@ class Upscale_Conv_block(nn.Module):
         return X[:,:,self.Ch:,self.Cw:] #slice if needed
         #Nnodes = W*H*N(Cout*4*r**2 + Cin)
 
-class CNN_chained_upscales(nn.Module):
+class CNN_vec_to_image(nn.Module):
     def __init__(self, nx, ny, nu=-1, features_out = 1, kernel_size=3, padding='same', \
                  upscale_factor=2, feature_scale_factor=2, final_padding=4, main_upscale=ConvShuffle, shortcut=ConvShuffle, \
                  padding_mode='zeros', activation=nn.functional.relu):
-        super(CNN_chained_upscales, self).__init__()
+        super(CNN_vec_to_image, self).__init__()
         self.feedthrough = nu!=-1
         if self.feedthrough:
             self.nu = tuple() if nu is None else ((nu,) if isinstance(nu,int) else nu)
@@ -331,3 +337,27 @@ class CNN_chained_downscales(nn.Module):
             Y = Y[:,None,:,:]
         return self.downblocks(Y).view(Y.shape[0],-1)
     
+class CNN_encoder(nn.Module):
+    def __init__(self, nb, nu, na, ny, nx, n_nodes_per_layer=64, n_hidden_layers=2, activation=nn.Tanh, features_ups_factor=1.5):
+        super(CNN_encoder, self).__init__()
+        self.nx = nx
+        self.nu = tuple() if nu is None else ((nu,) if isinstance(nu,int) else nu)
+        assert isinstance(ny,(list,tuple)) and (len(ny)==2 or len(ny)==3), 'ny should have 2 or 3 dimentions in the form (nchannels, height, width) or (height, width)'
+        ny = (ny[0]*na, ny[1], ny[2]) if len(ny)==3 else (na, ny[0], ny[1])
+        # print('ny=',ny)
+
+        self.CNN = CNN_chained_downscales(ny, features_ups_factor=features_ups_factor) 
+        self.net = MLP_res_net(input_size=nb*np.prod(self.nu,dtype=int) + self.CNN.nout, \
+            output_size=nx, n_nodes_per_layer=n_nodes_per_layer, n_hidden_layers=n_hidden_layers, activation=activation)
+
+
+    def forward(self, upast, ypast):
+        #ypast = (samples, na, W, H) or (samples, na, C, W, H) to (samples, na*C, W, H)
+        ypast = ypast.view(ypast.shape[0],-1,ypast.shape[-2],ypast.shape[-1])
+        # print('ypast.shape=',ypast.shape)
+        ypast_encode = self.CNN(ypast)
+        # print('ypast_encode.shape=',ypast_encode.shape)
+        net_in = torch.cat([upast.view(upast.shape[0],-1),ypast_encode.view(ypast.shape[0],-1)],axis=1)
+        return self.net(net_in)
+
+
