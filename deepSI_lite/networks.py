@@ -231,7 +231,7 @@ class CNN_vec_to_image(nn.Module):
         self.features0 = int(features_now)
         
         self.upblocks = nn.Sequential(*list(reversed(self.upblocks)))
-        self.FC = MLP_res_net(n_in=FCnet_in,n_out=self.width0*self.height0*self.features0, n_hidden_layers=1)
+        self.FC = MLP_res_net(input_size=FCnet_in,output_size=self.width0*self.height0*self.features0, n_hidden_layers=1)
         self.final_conv = nn.Conv2d(features_out, self.nchannels, kernel_size=3, padding=padding, padding_mode='zeros')
         
     def forward(self, x, u=None):
@@ -338,17 +338,17 @@ class CNN_chained_downscales(nn.Module):
         return self.downblocks(Y).view(Y.shape[0],-1)
     
 class CNN_encoder(nn.Module):
-    def __init__(self, nb, nu, na, ny, nx, n_nodes_per_layer=64, n_hidden_layers=2, activation=nn.Tanh, features_ups_factor=1.5):
+    def __init__(self, nb, nu, na, ny, nx, n_hidden_nodes=64, n_hidden_layers=2, activation=nn.Tanh, features_ups_factor=1.5):
         super(CNN_encoder, self).__init__()
         self.nx = nx
-        self.nu = tuple() if nu is None else ((nu,) if isinstance(nu,int) else nu)
+        self.nu = tuple() if nu=='scalar' else ((nu,) if isinstance(nu,int) else nu)
         assert isinstance(ny,(list,tuple)) and (len(ny)==2 or len(ny)==3), 'ny should have 2 or 3 dimentions in the form (nchannels, height, width) or (height, width)'
         ny = (ny[0]*na, ny[1], ny[2]) if len(ny)==3 else (na, ny[0], ny[1])
         # print('ny=',ny)
 
         self.CNN = CNN_chained_downscales(ny, features_ups_factor=features_ups_factor) 
         self.net = MLP_res_net(input_size=nb*np.prod(self.nu,dtype=int) + self.CNN.nout, \
-            output_size=nx, n_nodes_per_layer=n_nodes_per_layer, n_hidden_layers=n_hidden_layers, activation=activation)
+            output_size=nx, n_hidden_nodes=n_hidden_nodes, n_hidden_layers=n_hidden_layers, activation=activation)
 
 
     def forward(self, upast, ypast):

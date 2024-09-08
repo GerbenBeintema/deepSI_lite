@@ -105,14 +105,14 @@ class SUBNET(nn.Module):
         xfuture = torch.stack(xfuture,dim=1) #has shape (Nbatch, Ntime=T, nx)
 
         #compute output at all the future time indecies at the same time by combining the time and batch dim.
-        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim 
+        fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim (Nbatch, Ntime, ...) -> (Nbatch*Ntim, ...)
         yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
-        return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T) -> (Nbatch, T)
+        return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T, ...) -> (Nbatch, T, ...)
 
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
-        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False))[0].detach().numpy()
+        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
     def f_unbached(self, x, u):
@@ -155,7 +155,7 @@ class SUBNET_CT(nn.Module):
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
-        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True))[0].detach().numpy()
+        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
     def f_CT_unbached(self, x, u):
@@ -175,7 +175,7 @@ class Custom_SUBNET(nn.Module):
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
-        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False))[0].detach().numpy()
+        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
 class Custom_SUBNET_CT(nn.Module):
@@ -185,7 +185,7 @@ class Custom_SUBNET_CT(nn.Module):
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
-        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True))[0].detach().numpy()
+        ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
 def validate_custom_SUBNET_structure(model):
@@ -237,12 +237,22 @@ class SUBNET_LPV(Custom_SUBNET):
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
 
+
+
 # this is possible:
 # The data should allow for it though
 # class SUBNET_non_uniform_sampled(nn.Module):
 #     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
 #         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=False)
 
-##################
-####### LPV ######
-##################
+##########################
+####### CNN_SUBNET #######
+##########################
+
+class CNN_SUBNET(SUBNET):
+    def __init__(self, nu, ny, norm, nx, nb, na):
+        from deepSI_lite.networks import CNN_vec_to_image, CNN_encoder, MLP_res_net
+        h = norm.h(CNN_vec_to_image(nx, ny=ny))
+        f = norm.f(MLP_res_net(input_size=[nx, nu], output_size=nx))
+        encoder = norm.encoder(CNN_encoder(nb, nu, na, ny, nx))
+        super().__init__(nu, ny, norm, nx, nb, na, f, h, encoder, validate=False)

@@ -37,7 +37,7 @@ class IO_normalization_encoder(torch.nn.Module):
         return self.fun((upast-self.umean)/self.ustd, (ypast-self.ymean)/self.ystd)
 
 class Norm:
-    def __init__(self, umean, ustd, ymean, ystd, sampling_time):
+    def __init__(self, umean, ustd, ymean, ystd, sampling_time=1):
         self.umean, self.ustd, self.ymean, self.ystd = C(umean), C(ustd), C(ymean), C(ystd)
         self.sampling_time = C(sampling_time)
     
