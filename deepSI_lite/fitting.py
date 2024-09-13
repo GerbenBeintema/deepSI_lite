@@ -40,7 +40,7 @@ from nonlinear_benchmarks import Input_output_data
 import time
 
 def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:int, T:int=50, \
-        batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, device=None, loss_fun=compute_NMSE):
+        batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, device=None, compile_mode=None, loss_fun=compute_NMSE):
     """
     Trains a PyTorch model (e.g. a SUBNET model).
 
@@ -59,10 +59,25 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     Returns:
         dict: Contains the best model and optimizer states, and training/validation loss histories.
     """
+    def train_step(model, batch, optimizer):
+        def closure(backward=True):
+            loss = loss_fun(model, *batch)
+            if backward:
+                optimizer.zero_grad()
+                loss.backward()
+            return loss
+        loss = optimizer.step(closure)
+        return loss.item()
+    if compile_mode is not None:
+        train_step = torch.compile(train_step, mode=compile_mode)
+    
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
+    
+    #creat optimizer
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer
+
     arrays, indices = model.create_arrays(train, T=T, stride=stride) 
     print(f'Number of samples to train on = {len(indices)}')
     itter = data_batcher(*arrays, batch_size=batch_size, indices=indices, device=device)
@@ -71,36 +86,33 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     arrays_val = [array_val[indices].to(device) for array_val in arrays_val]
 
     best_val, best_model, best_optimizer, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer), float('nan')
-    NRMS_val, NRMS_train, time_usage = [], [], 0. #initialize the train and val monitor
+    NRMS_val, NRMS_train, time_usage_train = [], [], 0. #initialize the train and val monitor
     try:
         for it_count, batch in zip(tqdm(range(n_its)), itter):
-            if it_count%val_freq==0: ### Validation and printing loop ###
+            ### Validation and printing loop ###
+            if it_count%val_freq==0: 
                 NRMS_val.append((loss_fun(model, *arrays_val)).detach().cpu().numpy()**0.5)
                 NRMS_train.append((loss_acc/val_freq)**0.5)
                 if NRMS_val[-1]<=best_val:
                     best_val, best_model, best_optimizer = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
                 cloudpickle.dump({'NRMS_val':np.array(NRMS_val),'last_model':deepcopy(model).cpu(), 'best_model':best_model, \
                                   'best_optimizer':best_optimizer, 'NRMS_train': np.array(NRMS_train),\
-                                  'last_optimizer':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage if time_usage>0 else None)}, \
+                                  'last_optimizer':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage_train if time_usage_train>0 else None)}, \
                                   open(save_filename,'wb'))
-                print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage if time_usage>0 else float("nan")):.2f} samps/sec')
+                print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage_train if time_usage_train>0 else float("nan")):.2f} samps/sec')
                 loss_acc = 0.
+
             ### Train Step ###
-            def closure(backward=True):
-                loss = loss_fun(model, *batch)
-                if backward:
-                    optimizer.zero_grad()
-                    loss.backward()
-                return loss
-            
             start_t = time.time()
-            loss = optimizer.step(closure)
-            loss_acc += loss.item()
-            time_usage += time.time()-start_t
+            loss_acc += train_step(model, batch, optimizer)
+            time_usage_train += time.time()-start_t
+
     except KeyboardInterrupt:
         print('Stopping early due to KeyboardInterrupt')
     model.load_state_dict(best_model.state_dict()); model.cpu()
     return cloudpickle.load(open(save_filename,'rb'))
+
+
 
 def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: Input_output_data, n_its: int, 
         T: int = 50, stride: int = 1, batch_size: int = 256, val_freq: int = 250, 
@@ -117,8 +129,7 @@ def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: 
     for it_count, batch in zip(tqdm(range(n_its)), itter):
         if it_count % val_freq == 0:  # Validation step
             val_loss = loss_fun(model, *arrays_val).detach().numpy()**0.5
-
-            if val_loss <= best_val:
+            if val_loss <= best_val: #save best model if a new best validation loss has been obtained
                 best_val, best_model = val_loss, deepcopy(model.state_dict())
 
             print(f'Iter {it_count:7,}, Val Loss: {val_loss:.5f}')
