@@ -4,14 +4,13 @@ deepSI\_lite a lightweight and flexible implementation of the SUBNET structure f
 
 ## todo list
 
+* Compile?
 * Create Example notebook
 * CT with sample_time = None?
 * multi variate ny=int and norm  
 * Validate implementation with re-running of old results
+* Exporting to MATLAB
 * General documentation 
-* accidental mixing of sample times
+* warn upon accidental mixing of sample times
 * changing of sample times with encoder (re-sample)
-* base dt change warning
 * DT SUBNET should check if the sample time is unchanged!
-* CNN implementation
-

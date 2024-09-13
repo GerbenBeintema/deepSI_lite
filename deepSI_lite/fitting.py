@@ -86,11 +86,15 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage if time_usage>0 else float("nan")):.2f} samps/sec')
                 loss_acc = 0.
             ### Train Step ###
+            def closure(backward=True):
+                loss = loss_fun(model, *batch)
+                if backward:
+                    optimizer.zero_grad()
+                    loss.backward()
+                return loss
+            
             start_t = time.time()
-            loss = loss_fun(model, *batch)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            loss = optimizer.step(closure)
             loss_acc += loss.item()
             time_usage += time.time()-start_t
     except KeyboardInterrupt:

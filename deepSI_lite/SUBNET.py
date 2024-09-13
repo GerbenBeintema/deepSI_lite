@@ -21,7 +21,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
     else:
         u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False)
 
-    def window(x,window_shape=T): #this is some duplicate code can be optimized
+    def window(x,window_shape=T): 
         x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True)
         s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
         return x.transpose(s)
@@ -36,7 +36,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
         acc_L, ids = 0, []
         for d in data:
             assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'
-            ids.append(np.arange(0,len(d.u)-npast-T+1, stride)+acc_L) #only add ids which are valid for training (no overlap between the different datasets)
+            ids.append(np.arange(0,len(d.u)-npast-T+1, stride) + acc_L) #only add ids which are valid for training (no overlap between the different datasets)
             acc_L += len(d.u)
         ids = np.concatenate(ids)
     else:
