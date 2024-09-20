@@ -1,6 +1,20 @@
 
 import numpy as np
 import torch
+import cloudpickle, os
+from secrets import token_urlsafe
+from copy import deepcopy
+from tqdm.auto import tqdm
+from torch import nn, optim
+from nonlinear_benchmarks import Input_output_data
+import time
+
+def compute_NMSE(*A) -> torch.Tensor:
+    '''Computes the Normalized Mean Squared Error. 
+    Example usage: compute_NMSE(model, *xarrays, yarray) or compute_NMSE(model, upast, ypast, ufuture, yfuture)'''
+    model, *xarrays, yarray = A
+    yout = model(*xarrays)
+    return torch.mean((yout-yarray)**2/model.norm.ystd**2)
 
 def data_batcher(*arrays, batch_size=256, seed=0, device=None, indices=None):
     rng = np.random.default_rng(seed=seed)
@@ -17,30 +31,9 @@ def data_batcher(*arrays, batch_size=256, seed=0, device=None, indices=None):
             yield tuple(array[batch_perm].to(device) for array in arrays) #arrays are already torch arrays
             start, end = start + batch_size, end + batch_size
 
-def compute_clamp_NMSE(*A, NRMS_clamp_level=0.1, min_steps=None) -> torch.Tensor:
-    from math import ceil
-    model, *xarrays, yarray = A
-    yout = model(*xarrays)
-    errs = torch.mean((yout-yarray)**2/model.norm.ystd**2,dim=0) #[error step 0, error step 1, error step 2, ..]
-    if min_steps==None:
-        min_steps = ceil(model.nx/(model.ny if isinstance(model.ny,int) else 1))
-    return (torch.sum(errs[:min_steps]) + torch.sum(torch.clamp(errs[min_steps:],min=None, max=NRMS_clamp_level**2)))/len(errs)
-
-def compute_NMSE(*A) -> torch.Tensor:
-    model, *xarrays, yarray = A
-    yout = model(*xarrays)
-    return torch.mean((yout-yarray)**2/model.norm.ystd**2)
-
-import cloudpickle, os
-from secrets import token_urlsafe
-from copy import deepcopy
-from tqdm.auto import tqdm
-from torch import nn, optim
-from nonlinear_benchmarks import Input_output_data
-import time
-
 def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:int, T:int=50, \
-        batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, device=None, compile_mode=None, loss_fun=compute_NMSE):
+        batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, \
+            device=None, compile_mode=None, loss_fun=compute_NMSE):
     """
     Trains a PyTorch model (e.g. a SUBNET model).
 
@@ -66,7 +59,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
                 optimizer.zero_grad()
                 loss.backward()
             return loss
-        loss = optimizer.step(closure)
+        loss = optimizer.step(closure) #Using closure for the case that LBFGS is used.
         return loss.item()
     if compile_mode is not None:
         train_step = torch.compile(train_step, mode=compile_mode)
@@ -74,29 +67,33 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
     
-    #creat optimizer
+    # Creat optimizer
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer
+    optimizer = torch.optim.Adam(model.parameters()) if optimizer==None else optimizer    
 
+    # Create training arrays
     arrays, indices = model.create_arrays(train, T=T, stride=stride) 
     print(f'Number of samples to train on = {len(indices)}')
     itter = data_batcher(*arrays, batch_size=batch_size, indices=indices, device=device)
 
+    # Create validation arrays
     arrays_val, indices = model.create_arrays(val, T='sim')
     arrays_val = [array_val[indices].to(device) for array_val in arrays_val]
 
-    best_val, best_model, best_optimizer, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer), float('nan')
+    # Initalize all the monitors and best found models
+    best_val, best_model, best_optimizer_state, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer.state_dict()), float('nan')
     NRMS_val, NRMS_train, time_usage_train = [], [], 0. #initialize the train and val monitor
     try:
-        for it_count, batch in zip(tqdm(range(n_its)), itter):
-            ### Validation and printing loop ###
+        progress_bar = tqdm(range(n_its))
+        for it_count, batch in zip(progress_bar, itter):
+            ### Validation and printing step ###
             if it_count%val_freq==0: 
-                NRMS_val.append((loss_fun(model, *arrays_val)).detach().cpu().numpy()**0.5)
+                with torch.no_grad(): NRMS_val.append((loss_fun(model, *arrays_val)).cpu().numpy()**0.5)
                 NRMS_train.append((loss_acc/val_freq)**0.5)
                 if NRMS_val[-1]<=best_val:
-                    best_val, best_model, best_optimizer = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
+                    best_val, best_model, best_optimizer_state = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
                 cloudpickle.dump({'NRMS_val':np.array(NRMS_val),'last_model':deepcopy(model).cpu(), 'best_model':best_model, \
-                                  'best_optimizer':best_optimizer, 'NRMS_train': np.array(NRMS_train),\
+                                  'best_optimizer_state':best_optimizer_state, 'NRMS_train': np.array(NRMS_train), 'val_freq': val_freq, \
                                   'last_optimizer':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage_train if time_usage_train>0 else None)}, \
                                   open(save_filename,'wb'))
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage_train if time_usage_train>0 else float("nan")):.2f} samps/sec')
@@ -104,14 +101,44 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
 
             ### Train Step ###
             start_t = time.time()
-            loss_acc += train_step(model, batch, optimizer)
+            loss = train_step(model, batch, optimizer)
             time_usage_train += time.time()-start_t
 
+            ### Post Train step ##
+            if np.isnan(loss):
+                print('!!!!!!!!!!!!! Loss became NaN and training will be stopped !!!!!!!!!!!!!!')
+                break
+            loss_acc += loss # add the loss the the loss accumulator
+            progress_bar.set_description(f'Sqrt loss: {loss**0.5:.5f}', refresh=False)
     except KeyboardInterrupt:
         print('Stopping early due to KeyboardInterrupt')
     model.load_state_dict(best_model.state_dict()); model.cpu()
     return cloudpickle.load(open(save_filename,'rb'))
 
+
+def get_checkpoint_dir():
+    '''A utility function which gets the checkpoint directory for each OS
+
+    It creates a working directory called deepSI-checkpoints 
+        in LOCALAPPDATA/deepSI-checkpoints/ for windows
+        in ~/.deepSI-checkpoints/ for unix like
+        in ~/Library/Application Support/deepSI-checkpoints/ for darwin
+
+    Returns
+    -------
+    checkpoints_dir
+    '''
+    import os
+    from sys import platform
+    if platform == "darwin": #not tested but here it goes
+        checkpoints_dir = os.path.expanduser('~/Library/Application Support/deepSI-checkpoints/')
+    elif platform == "win32":
+        checkpoints_dir = os.path.join(os.getenv('LOCALAPPDATA'),'deepSI-checkpoints/')
+    else: #unix like, might be problematic for some weird operating systems.
+        checkpoints_dir = os.path.expanduser('~/.deepSI-checkpoints/')#Path('~/.deepSI/')
+    if os.path.isdir(checkpoints_dir) is False:
+        os.mkdir(checkpoints_dir)
+    return checkpoints_dir
 
 
 def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: Input_output_data, n_its: int, 
@@ -143,27 +170,3 @@ def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: 
     model.load_state_dict(best_model)  # Load the best model
     return best_model
 
-
-def get_checkpoint_dir():
-    '''A utility function which gets the checkpoint directory for each OS
-
-    It creates a working directory called deepSI-checkpoints 
-        in LOCALAPPDATA/deepSI-checkpoints/ for windows
-        in ~/.deepSI-checkpoints/ for unix like
-        in ~/Library/Application Support/deepSI-checkpoints/ for darwin
-
-    Returns
-    -------
-    checkpoints_dir
-    '''
-    import os
-    from sys import platform
-    if platform == "darwin": #not tested but here it goes
-        checkpoints_dir = os.path.expanduser('~/Library/Application Support/deepSI-checkpoints/')
-    elif platform == "win32":
-        checkpoints_dir = os.path.join(os.getenv('LOCALAPPDATA'),'deepSI-checkpoints/')
-    else: #unix like, might be problematic for some weird operating systems.
-        checkpoints_dir = os.path.expanduser('~/.deepSI-checkpoints/')#Path('~/.deepSI/')
-    if os.path.isdir(checkpoints_dir) is False:
-        os.mkdir(checkpoints_dir)
-    return checkpoints_dir

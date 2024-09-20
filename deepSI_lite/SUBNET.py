@@ -44,9 +44,12 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
 
     s = torch.as_tensor
     if not add_sampling_time:
-        return (s(upast), s(ypast), s(ufuture), s(yfuture)), ids #this could return all the valid ids
+        return (s(upast), s(ypast), s(ufuture), s(yfuture)), ids #this could return all the valid indicies
     else:
-        sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(size=(len(upast),))
+        if isinstance(data, list):
+            sampling_time = torch.cat([torch.as_tensor(d.sampling_time,dtype=torch.float32)*torch.ones(len(d)) for d in data])[:len(upast)]
+        else:
+            sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(len(upast))
         return (s(upast), s(ypast), s(ufuture), sampling_time, s(yfuture)), ids
 
 def validate_SUBNET_structure(model):
@@ -73,7 +76,8 @@ def validate_SUBNET_structure(model):
             raise NotImplementedError(f'model validation of type {model} cannot be validated yet')
 
 class SUBNET(nn.Module):
-    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, f=None, h=None, encoder=None, feedthrough=False, validate=True) -> None:
+    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, \
+                 f=None, h=None, encoder=None, feedthrough=False, validate=True) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
         self.f = f if f is not None else norm.f(MLP_res_net(input_size = [nx , nu], output_size = nx))
@@ -125,7 +129,7 @@ class SUBNET(nn.Module):
 
 class SUBNET_CT(nn.Module):
     #both norm, base_sampling_time have a sample time 
-    def __init__(self, nu, ny, norm, nx=10, nb=20, na=20, f_CT=None, h=None, encoder=None, integrator=None, feedthrough=False, validate=True) -> None:
+    def __init__(self, nu, ny, norm:Norm, nx=10, nb=20, na=20, f_CT=None, h=None, encoder=None, integrator=None, feedthrough=False, validate=True) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
         self.f_CT = f_CT if f_CT is not None else norm.f_CT(MLP_res_net(input_size = [nx , nu], output_size = nx), tau=norm.sampling_time*50)
@@ -226,6 +230,8 @@ class SUBNET_LPV(Custom_SUBNET):
         validate_custom_SUBNET_structure(self) #does checks if forward is working as intended
     
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
+        # is a function of upast, ypast and ufuture -> yfuture_sim_pred
+        
         mv = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
         yfuture_sim = []
         x = self.encoder(upast, ypast)
@@ -256,3 +262,5 @@ class CNN_SUBNET(SUBNET):
         f = norm.f(MLP_res_net(input_size=[nx, nu], output_size=nx))
         encoder = norm.encoder(CNN_encoder(nb, nu, na, ny, nx))
         super().__init__(nu, ny, norm, nx, nb, na, f, h, encoder, validate=False)
+
+
