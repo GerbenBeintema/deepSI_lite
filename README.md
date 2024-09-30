@@ -4,40 +4,41 @@ deepSI\_lite a lightweight and flexible implementation of the SUBNET structure f
 
 ## Features
 
-* Model structure
-  * SUBNET encoder structue `deepSI_lite.models`
-  * Continuous time SUBNET encoder structure (`deepSI_lite.models_CT`)
-  * Base class for fully custom SUBNET structures with shared parameters between `f`, `h` or `encoder`. (`deepSI_lite.Custom_SUBNET`)
+* A number of popular SUBNET structures
+  * SUBNET encoder structue (`deepSI_lite.models.SUBNET`)
+  * Continuous time SUBNET encoder structure (`deepSI_lite.models.SUBNET_CT`)
+  * Base class for fully custom SUBNET structures with shared parameters between `f`, `h` or `encoder`. (`deepSI_lite.models.Custom_SUBNET`)
+  * CNN SUBNET (`CNN_SUBNET`)
+  * LPV SUBNET (`SUBNET_LPV`)
+  * HNN SUBNET (`HNN_SUBNET`)
+* Connection to `nonlinear_benchmarks` such that benchmarks can easily be loaded and evaluated on.
+* Low amount of code such that it can be easily forked and edited to add missing features.
 
 ## Installation
-
 
 ```
 conda install -c anaconda git
 pip install git+https://github.com/GerbenBeintema/deepSI_lite@master
 ```
 
+## Example usage
+
+```python
+import deepSI_lite
+```
+
+## Futher documentation
+
+Check out `examples/Demonstration deepSI_lite.ipynb`.
+
 ## todo list
 
-* Compile? -> Memory Leak?
-* Create Example notebook
-  * Basic usage
-* CT with sample_time = None? -> That's not allows
-  * CT with list of data currently does not work
-* multi variate ny=int and norm  
-* Validate implementation with re-running of old results
-* Exporting to MATLAB
+* The compile option in `fit` currently has a memory leak?
+* Expand demonstration notebook
 * General documentation 
-* pip install deepSI
-* Change name from deepSI -> deepSI_lite
-* warn upon accidental mixing of sample times
-* changing of sample times with encoder (re-sample)
-* DT SUBNET should check if the sample time is unchanged!
-* Model estimate validation
-* Export
-* Regularization
-* nu scalar -> nu=1, Auto conversion to MIMO 
-* CT shared parameters
-* Multiple aux from forward.
-* Aux loss function inputs
-
+* BUG/missing feature: CT SUBNET and DT SUBNET does not produce the correct initial when the sampling time is altered. (the encoder assumes that the sampling time does not change)
+* Streamline the user experiance when a model only has been implemented for MIMO and a SISO dataset is given.
+* Streamline the ONNX exporting such that the estimated models can be easily loaded in for instance in MATLAB
+* Change name from `deepSI` -> `deepSI_lite`
+* pypi data upload such that it can be easily installed with `pip install deepSI_lite`
+* Regularization example in demonstration notebook
