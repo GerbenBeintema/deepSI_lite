@@ -94,7 +94,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
                     best_val, best_model, best_optimizer_state = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
                 cloudpickle.dump({'NRMS_val':np.array(NRMS_val),'last_model':deepcopy(model).cpu(), 'best_model':best_model, \
                                   'best_optimizer_state':best_optimizer_state, 'NRMS_train': np.array(NRMS_train), 'val_freq': val_freq, \
-                                  'last_optimizer':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage_train if time_usage_train>0 else None)}, \
+                                  'last_optimizer_state':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage_train if time_usage_train>0 else None)}, \
                                   open(save_filename,'wb'))
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage_train if time_usage_train>0 else float("nan")):.2f} samps/sec')
                 loss_acc = 0.
