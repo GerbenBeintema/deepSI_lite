@@ -14,7 +14,7 @@ na = nb = 5
 #option 2:
 from deepSI_lite.networks import MLP_res_net, RK4
 from deepSI_lite.normalization import get_nu_ny_and_auto_norm
-from deepSI_lite.SUBNET import SUBNET, SUBNET_CT
+from deepSI_lite.models import SUBNET, SUBNET_CT
 
 nu, ny, norm = get_nu_ny_and_auto_norm(train_val)
 f = norm.f(MLP_res_net(input_size = [nx , nu], output_size= nx))

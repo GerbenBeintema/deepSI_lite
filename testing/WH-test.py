@@ -1,4 +1,4 @@
-from deepSI_lite.SUBNET import SUBNET
+from deepSI_lite.models import SUBNET
 import nonlinear_benchmarks
 
 train_val, test = nonlinear_benchmarks.WienerHammerBenchMark()

@@ -3,7 +3,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 from torch import nn
 import torch
-from deepSI_lite.networks import MLP_res_net, RK4
+from deepSI_lite.networks import MLP_res_net, rk4_integrator
 from nonlinear_benchmarks import Input_output_data
 import numpy as np
 from deepSI_lite.normalization import Norm
@@ -40,7 +40,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
             acc_L += len(d.u)
         ids = np.concatenate(ids)
     else:
-        ids = np.arange(len(data)-npast-T+1)
+        ids = np.arange(0, len(data)-npast-T+1, stride)
 
     s = torch.as_tensor
     if not add_sampling_time:
@@ -135,7 +135,7 @@ class SUBNET_CT(nn.Module):
         self.f_CT = f_CT if f_CT is not None else norm.f_CT(MLP_res_net(input_size = [nx , nu], output_size = nx), tau=norm.sampling_time*50)
         self.h = h if h is not None else norm.h(MLP_res_net(input_size = [nx , nu] if feedthrough else nx, output_size = ny))
         self.encoder = encoder if encoder is not None else norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx))
-        self.integrator = integrator if integrator is not None else RK4()
+        self.integrator = integrator if integrator is not None else rk4_integrator
         if validate:
             validate_SUBNET_structure(self)
 
@@ -208,9 +208,9 @@ def validate_custom_SUBNET_structure(model):
                 yfuture_pred = model(upast_test, ypast_test, ufuture_test, v(batch_size))
             assert yfuture_pred.shape==((batch_size,T) if ny=='scalar' else (batch_size,T,ny))
 
-##################
-####### LPV ######
-##################
+#########################
+####### SUBNET_LPV ######
+#########################
 
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
@@ -243,14 +243,6 @@ class SUBNET_LPV(Custom_SUBNET):
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
 
-
-
-# this is possible:
-# The data should allow for it though
-# class SUBNET_non_uniform_sampled(nn.Module):
-#     def create_arrays(self, data: Input_output_data | list, T : int=50, stride: int=1):
-#         return past_future_arrays(data, self.na, self.nb, T=T, stride=stride, add_sampling_time=False)
-
 ##########################
 ####### CNN_SUBNET #######
 ##########################
@@ -263,4 +255,56 @@ class CNN_SUBNET(SUBNET):
         encoder = norm.encoder(CNN_encoder(nb, nu, na, ny, nx))
         super().__init__(nu, ny, norm, nx, nb, na, f, h, encoder, validate=False)
 
+##########################
+####### HNN_SUBNET #######
+##########################
 
+from deepSI_lite.networks import Ham_converter, ELU_lower_bound, Skew_sym_converter, Sym_pos_semidef_converter, Matrix_converter
+class HNN_SUBNET(Custom_SUBNET_CT):
+    def __init__(self, nu, ny, norm, nx, na, nb, Hnet=None, Jnet=None, \
+                 Rnet=None, Gnet=None, encoder=None, integrator=None, tau=None):
+        super().__init__()
+        assert nu==ny
+        self.nu, self.ny, self.norm, self.nx, self.na, self.nb = nu, ny, norm, nx, na, nb
+        self.Hnet = Ham_converter(ELU_lower_bound(MLP_res_net(nx, 'scalar'))) if Hnet is None else Hnet
+        self.Jnet = Skew_sym_converter(MLP_res_net(nx, nx*nx)) if Jnet is None else Jnet
+        self.Rnet = Sym_pos_semidef_converter(MLP_res_net(nx, nx*nx)) if Rnet is None else Rnet
+        nu_val = 1 if nu=='scalar' else nu
+        self.Gnet = Matrix_converter(MLP_res_net(nx, nx*nu_val), nrows=nx, ncols=nu_val) if Gnet is None else Gnet
+        self.integrator = rk4_integrator if integrator is None else integrator
+        self.encoder = norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx)) if encoder is None else encoder
+        self.norm = norm
+        self.tau = norm.sampling_time*10 if tau is None else tau
+        validate_custom_SUBNET_structure(self)
+    
+    def get_matricies(self, x):
+        with torch.enable_grad():
+            if x.requires_grad == False:
+                x.requires_grad = True
+            H = self.Hnet(x)
+            Hsum = H.sum()
+            dHdx = torch.autograd.grad(Hsum, x, create_graph=True)[0]
+
+        J_x = self.Jnet(x)
+        R_x = self.Rnet(x)
+        G_x = self.Gnet(x)
+        return J_x, R_x, G_x, dHdx, H
+
+    def forward(self, upast, ypast, ufuture, sampling_time, yfuture=None):
+        x = self.encoder(upast, ypast)
+        ufuture = (ufuture.view(ufuture.shape[0],ufuture.shape[1],-1)-self.norm.umean)/self.norm.ustd #normalize inputs
+        yfuture_sim = []
+        for u in ufuture.swapaxes(0,1): #if using a 1-step euler this can be reduced further 
+            J_x, R_x, G_x, dHdx, H = self.get_matricies(x) #this can be done outside of the loop for a speedup
+            y_hat = torch.einsum('bij,bi->bj', G_x, dHdx) #bij,bi->bj  = A^T @ dHdx
+            yfuture_sim.append(y_hat)
+            def f_CT(x, u):
+                J_x, R_x, G_x, dHdx, H = self.get_matricies(x)
+                Gu = torch.einsum('bij,bj->bi', G_x, u) # G_x (Nb, nx, nu) times u (Nb, nu) = (Nb, nx)
+                return (torch.einsum('bij,bj->bi', J_x - R_x, dHdx) + Gu)/self.tau
+    
+            x = self.integrator(f_CT, x, u, sampling_time)
+        
+        yfuture_sim = torch.stack(yfuture_sim, dim=1)
+        yfuture_sim = yfuture_sim[:,:,0] if self.ny=='scalar' else yfuture_sim
+        return yfuture_sim*self.norm.ystd + self.norm.ymean

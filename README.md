@@ -2,6 +2,21 @@
 
 deepSI\_lite a lightweight and flexible implementation of the SUBNET structure for data-driven modeling of dynamical systems (i.e. system identification). 
 
+## Features
+
+* Model structure
+  * SUBNET encoder structue `deepSI_lite.models`
+  * Continuous time SUBNET encoder structure (`deepSI_lite.models_CT`)
+  * Base class for fully custom SUBNET structures with shared parameters between `f`, `h` or `encoder`. (`deepSI_lite.Custom_SUBNET`)
+
+## Installation
+
+
+```
+conda install -c anaconda git
+pip install git+https://github.com/GerbenBeintema/deepSI_lite@master
+```
+
 ## todo list
 
 * Compile? -> Memory Leak?

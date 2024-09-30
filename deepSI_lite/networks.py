@@ -45,21 +45,37 @@ class MLP_res_net(nn.Module):
         out = self.net_nonlin(net_in) + self.net_res(net_in)
         return out[:,0] if self.scalar_output else out
     
-class RK4(nn.Module):
-    def __init__(self, n_RK4_steps=1):
-        super().__init__()
-        self.n_RK4_steps = n_RK4_steps
+def euler_integrator(f, x, u, dt, n_steps=1):
+    dtp = (dt/n_steps)[:,None]
+    for _ in range(n_steps): #f(x,u) has shape (nbatch, nx)
+        x = x + f(x,u)*dtp
+    return x
 
-    def forward(self, f, x, u, dt):
-        dtp = (dt/self.n_RK4_steps)[:,None]
-        for _ in range(self.n_RK4_steps): #f(x,u) has shape (nbatch, nx)
-            k1 = f(x,u)*dtp
-            k2 = f(x+k1*0.5,u)*dtp
-            k3 = f(x+k2*0.5,u)*dtp
-            k4 = f(x+k3,u)*dtp
-            x = x + (k1+2*k2+2*k3+k4)/6
-        return x
-    
+# class RK4(nn.Module):
+
+def rk4_integrator(f, x, u, dt, n_steps=1):
+    dtp = (dt/n_steps)[:,None]
+    for _ in range(n_steps): #f(x,u) has shape (nbatch, nx)
+        k1 = f(x,u)*dtp
+        k2 = f(x+k1*0.5,u)*dtp
+        k3 = f(x+k2*0.5,u)*dtp
+        k4 = f(x+k3,u)*dtp
+        x = x + (k1+2*k2+2*k3+k4)/6
+    return x
+
+def rk45_integrator(f, x, u, dt, n_steps=1):
+    dtp = (dt/n_steps)[:,None]
+    for _ in range(n_steps): #f(x,u) has shape (nbatch, nx)
+        k1 = dtp * f(x, u)
+        k2 = dtp * f(x + k1 / 4, u)
+        k3 = dtp * f(x + 3 * k1 / 32 + 9 * k2 / 32, u)
+        k4 = dtp * f(x + 1932 * k1 / 2197 - 7200 * k2 / 2197 + 7296 * k3 / 2197, u)
+        k5 = dtp * f(x + 439 * k1 / 216 - 8 * k2 + 3680 * k3 / 513 - 845 * k4 / 4104, u)
+        k6 = dtp * f(x - 8 * k1 / 27 + 2 * k2 - 3544 * k3 / 2565 + 1859 * k4 / 4104 - 11 * k5 / 40, u)
+        
+        x = x + (16 * k1 / 135 + 6656 * k3 / 12825 + 28561 * k4 / 56430 - 9 * k5 / 50 + 2 * k6 / 55)
+    return x
+
 
 import numpy as np
 class Bilinear(nn.Module):
@@ -361,3 +377,83 @@ class CNN_encoder(nn.Module):
         return self.net(net_in)
 
 
+######################################################
+########## HNN SUBNET function #######################
+######################################################
+
+class ELU_lower_bound(nn.Module): #is used 
+    def __init__(self, net, lower_bound=-10): #-10 such that the gradient is not suppressed near zero
+        super(ELU_lower_bound, self).__init__()
+        self.net = net
+        self.lower_bound = lower_bound
+        
+    def forward(self, *args, **kwargs):    
+        y = self.net(*args, **kwargs)
+#         y *= args[0].shape[1]**0.5
+        # elu[y - (lower_bound + 1)] + (lower_bound + 1)
+        b = self.lower_bound + 1
+        return torch.nn.functional.elu(y - b) + b
+
+class Ham_converter(nn.Module): #rescales the output such that the std of dH/dx = 1
+    def __init__(self, net, norm='auto'):
+        super().__init__()
+        self.net = net
+        self.norm = norm
+    
+    def forward(self, x):
+        if self.norm=='auto':
+            return self.net(x)*x.shape[1]**0.5
+        else:
+            return self.net(x)*self.norm
+
+class Matrix_converter(nn.Module):
+    def __init__(self, net, nrows, ncols, norm='auto'):
+        super().__init__()
+        self.net = net
+        self.norm = norm
+        self.nrows = nrows
+        self.ncols = ncols
+
+    def forward(self, x):
+        A = self.net(x).view(x.shape[0], self.nrows, self.ncols)
+        if self.norm=='auto':
+            A = A/(self.ncols**0.5) #this can be improved with some additional math 
+        else:
+            A = A/self.norm #this can be improved with some additional math 
+        return A
+
+class Skew_sym_converter(nn.Module):
+    def __init__(self, net, norm='auto'):
+        super().__init__()
+        self.net = net
+        self.norm = norm
+
+    def forward(self, x):
+        z = self.net(x)
+        #z.shape = (Nbatch, nx*nx)
+        nx = int(round(z.shape[1]**0.5))
+        assert nx*nx==z.shape[1], 'the output of net needs to have a sqaure number of elements to be reshaped to a square matrix'
+        J = z.view(z.shape[0], nx, nx)
+        if self.norm=='auto':
+            J = J/(((nx-1)*2)**0.5) #this can be improved with some additional math 
+        else:
+            J = J/self.norm #this can be improved with some additional math 
+        return J - J.permute(0,2,1)
+
+class Sym_pos_semidef_converter(nn.Module):
+    def __init__(self, net, norm='auto'):
+        super().__init__()
+        self.norm = norm
+        self.net = net
+
+    def forward(self, x):
+        z = self.net(x)
+        nx = int(round(z.shape[1]**0.5))
+        assert nx*nx==z.shape[1], 'the output of net needs to have a sqaure number of elements to be reshaped to a square matrix'
+        A = z.view(z.shape[0], nx, nx)
+        if self.norm=='auto':
+            A = A/(((nx+2)*nx**2)**0.25) #this might not be entirely correct
+        else:
+            A = A/self.norm
+        R = torch.einsum('bik,bjk->bij', A, A)
+        return R
