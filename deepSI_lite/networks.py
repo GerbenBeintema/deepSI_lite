@@ -1,6 +1,11 @@
 import torch
 from torch.nn import Sequential
 from torch import nn
+
+###########################################################
+#### Multi layer peceptron/feed forward neural network ####
+###########################################################
+
 class MLP_res_net(nn.Module):
     def __init__(self, input_size, output_size, n_hidden_layers = 2, n_hidden_nodes = 64, \
                  activation=nn.Tanh, zero_bias=True):
@@ -45,13 +50,15 @@ class MLP_res_net(nn.Module):
         out = self.net_nonlin(net_in) + self.net_res(net_in)
         return out[:,0] if self.scalar_output else out
     
+###########################
+###### Integrators ########
+###########################
+
 def euler_integrator(f, x, u, dt, n_steps=1):
     dtp = (dt/n_steps)[:,None]
     for _ in range(n_steps): #f(x,u) has shape (nbatch, nx)
         x = x + f(x,u)*dtp
     return x
-
-# class RK4(nn.Module):
 
 def rk4_integrator(f, x, u, dt, n_steps=1):
     dtp = (dt/n_steps)[:,None]
@@ -76,6 +83,9 @@ def rk45_integrator(f, x, u, dt, n_steps=1):
         x = x + (16 * k1 / 135 + 6656 * k3 / 12825 + 28561 * k4 / 56430 - 9 * k5 / 50 + 2 * k6 / 55)
     return x
 
+##################################
+##### LPV SUBNET networks ########
+##################################
 
 import numpy as np
 class Bilinear(nn.Module):
@@ -96,49 +106,9 @@ class Bilinear(nn.Module):
         A = (self.Alin[None] + (self.Anlin[None]*p[:,:,None,None]).sum(1)) #nbatch, n_out, n_in
         return self.std_output[:,None]*A/self.std_input[None,:]
 
-class LPV_layer(nn.Module):
-    #y = A(p)@x + B(p)@u
-    def __init__(self, nu, ny, nx, np):
-        super().__init__()
-        self.sqeeze_output = ny =='scalar'
-        self.nu = 1 if nu=='scalar' else nu
-        self.ny = 1 if ny=='scalar' else ny
-        self.nx, self.np = nx, np
-        self.A = Bilinear(nx, ny, np)
-        self.B = Bilinear(nu, ny, np)
-
-    def forward(self, x, u, p):
-        # x (Nbatch, nx)
-        u = u.view(u.shape[0],-1) #(Nbatch, nu)
-        A = self.A(p) #(Nbatch, ny, nx)
-        B = self.B(p) #(Nbatch, ny, nu)
-        y = torch.matmul(A, x.unsqueeze(2))[:,:,0] + torch.matmul(B, u.unsqueeze(2))[:,:,0]
-        return y[:,0] if self.sqeeze_output else y
-
-#problems: 
-# pnet depdent on u?
-# what to do with exernally schedualed?
-
-class LPV_SS(nn.Module):
-    def __init__(self, nx, nu, ny, np, pnet=None, feedthrough=True):
-        super().__init__()
-        assert feedthrough==True
-        self.nx, self.nu, self.ny, self.np, self.feedthrough = nx, nu, ny, np, feedthrough
-        self.pnet = MLP_res_net(input_size=[nx, nu], output_size=np) if pnet is None else pnet
-        self.output_LPV = LPV_layer(nu=nu, ny=ny, nx=nx, np=np)
-        self.state_LPV = LPV_layer(nu=nu, ny=nx, nx=nx, np=np) #the output of this layer is next state hence ny=nx
-    
-    def forward(self, x, u):
-        p = self.pnet(x)
-        y = self.output_LPV(x, u, p=p) #might be depent on feedthrough
-        x_next = self.state_LPV(x, u, p=p)
-        return y, x_next
-
-
 ####################
 ###  CNN SUBNET ####
 ####################
-
 
 class ConvShuffle(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding='same', upscale_factor=2, \
@@ -377,9 +347,9 @@ class CNN_encoder(nn.Module):
         return self.net(net_in)
 
 
-######################################################
-########## HNN SUBNET function #######################
-######################################################
+############################################################
+################ HNN SUBNET function #######################
+############################################################
 
 class ELU_lower_bound(nn.Module): #is used 
     def __init__(self, net, lower_bound=-10): #-10 such that the gradient is not suppressed near zero

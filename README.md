@@ -60,12 +60,12 @@ Check out `examples/Demonstration deepSI_lite.ipynb`.
 
 ## todo list and known issues
 
-* The compile option in `fit` currently has a memory leak?
+* Known issues: The compile option in `fit` currently has a memory leak
 * Expand demonstration notebook
+  * Regularization example in demonstration notebook
 * General documentation 
 * known issues: CT SUBNET and DT SUBNET does not produce the correct initial when the sampling time is altered. (the encoder assumes that the sampling time does not change)
 * Streamline the user experiance when a model only has been implemented for MIMO and a SISO dataset is given.
 * Streamline the ONNX exporting such that the estimated models can be easily loaded in for instance in MATLAB
-* Change name from `deepSI` -> `deepSI_lite`
+* Change name from `deepSI_lite` -> `deepSI` 
 * pypi data upload such that it can be easily installed with `pip install deepSI_lite`
-* Regularization example in demonstration notebook

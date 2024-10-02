@@ -33,7 +33,7 @@ def data_batcher(*arrays, batch_size=256, seed=0, device=None, indices=None):
 
 def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:int, T:int=50, \
         batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, \
-            device=None, compile_mode=None, loss_fun=compute_NMSE):
+            device=None, compile_mode=None, loss_fun=compute_NMSE, val_fun=compute_NMSE):
     """
     Trains a PyTorch model (e.g. a SUBNET model).
 
@@ -48,6 +48,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
         val_freq (int, optional): Validation frequency (in iterations). Default is 250.
         optimizer (optim.Optimizer, optional): Optimizer for training. Default is Adam.
         loss_fun (callable, optional): Loss function. Default is compute_NMSE.
+        val_fun (callable, optional): Validation function. Default is compute_NMSE.
 
     Returns:
         dict: Contains the best model and optimizer states, and training/validation loss histories.
@@ -88,7 +89,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
         for it_count, batch in zip(progress_bar, itter):
             ### Validation and printing step ###
             if it_count%val_freq==0: 
-                with torch.no_grad(): NRMS_val.append((loss_fun(model, *arrays_val)).cpu().numpy()**0.5)
+                with torch.no_grad(): NRMS_val.append((val_fun(model, *arrays_val)).cpu().numpy()**0.5)
                 NRMS_train.append((loss_acc/val_freq)**0.5)
                 if NRMS_val[-1]<=best_val:
                     best_val, best_model, best_optimizer_state = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?

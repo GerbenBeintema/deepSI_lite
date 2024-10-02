@@ -7,6 +7,7 @@ from deepSI_lite.networks import MLP_res_net, rk4_integrator
 from nonlinear_benchmarks import Input_output_data
 import numpy as np
 from deepSI_lite.normalization import Norm
+from warnings import warn
 
 def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
     if T=='sim':
@@ -116,6 +117,8 @@ class SUBNET(nn.Module):
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
+        if data.sampling_time!=self.norm.sampling_time:
+            warn('It seems that the model is being simulated at a different sampling time as it was trained on.')
         ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=False)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
@@ -159,6 +162,8 @@ class SUBNET_CT(nn.Module):
     def simulate(self, data: Input_output_data | list):
         if isinstance(data, (list, tuple)):
             return [self.simulate(d) for d in data]
+        if data.sampling_time!=self.norm.sampling_time:
+            warn('It seems that the model is being simulated at a different sampling time as it was trained on. The encoder currently assumes that the sampling_time is kept constant')
         ysim = self(*past_future_arrays(data, self.na, self.nb, T='sim', add_sampling_time=True)[0])[0].detach().numpy()
         return Input_output_data(u=data.u, y=np.concatenate([data.y[:max(self.na, self.nb)],ysim],axis=0), state_initialization_window_length=max(self.na, self.nb))
 
