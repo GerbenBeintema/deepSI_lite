@@ -62,7 +62,6 @@ Check out `examples/Demonstration deepSI_lite.ipynb`.
 
 * Known issues: The compile option in `fit` currently has a memory leak
 * Expand demonstration notebook
-  * Regularization example in demonstration notebook
 * General documentation 
 * known issues: CT SUBNET and DT SUBNET does not produce the correct initial when the sampling time is altered. (the encoder assumes that the sampling time does not change)
 * Streamline the user experiance when a model only has been implemented for MIMO and a SISO dataset is given.
