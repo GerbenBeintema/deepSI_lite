@@ -427,3 +427,43 @@ class Sym_pos_semidef_converter(nn.Module):
             A = A/self.norm
         R = torch.einsum('bik,bjk->bij', A, A)
         return R
+
+class Bias_net(nn.Module): 
+    '''indepdent of the input but trainanble bias'''
+    def __init__(self, num_pars, requires_grad=True):
+        super().__init__()
+        self.pars = nn.Parameter(torch.randn(num_pars), requires_grad=requires_grad)
+
+    def forward(self, *args, **kwargs):
+        return torch.broadcast_to(self.pars, (args[0].shape[0], self.pars.shape[0]))  
+
+class Contant_net(nn.Module):  #todo documentation
+    '''indepdent of the input but trainanble bias'''
+    def __init__(self, y):
+        super().__init__()
+        assert isinstance(y, torch.Tensor)
+        self.y = y 
+
+    def forward(self, *args, **kwargs):
+        return torch.broadcast_to(self.y, (args[0].shape[0],) + self.y.shape) 
+
+
+class Sum_net(nn.Module):
+    def __init__(self, nets, scaling_factors='auto'):
+        super().__init__()
+        self.nets = nn.ParameterList(nets)
+        self.scaling_factors = [1/len(nets)**0.5]*len(nets) if scaling_factors=='auto' else scaling_factors
+
+    def forward(self, *args, **kwargs):
+        outputs = [scaling*net(*args, **kwargs) for scaling, net in zip(self.scaling_factors, self.nets)]
+        return torch.stack(outputs,dim=0).sum(0)
+
+
+class Quadratic_net(nn.Module): 
+    def __init__(self, nx):
+        super().__init__()
+        self.net = Skew_sym_converter(Bias_net(nx*nx))
+
+    def forward(self, x):
+        Q = self.net(x)
+        return torch.einsum('bi,bij,bj->b', x, Q, x)

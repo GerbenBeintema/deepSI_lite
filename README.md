@@ -14,7 +14,7 @@ deepSI\_lite provides a lightweight pytorch based framework for data-driven lear
     * see chapter 4: https://research.tue.nl/files/318935789/20240321_Beintema_hf.pdf
   * LPV SUBNET (`SUBNET_LPV`)
     * see: https://arxiv.org/abs/2204.04060
-  * HNN SUBNET (`HNN_SUBNET`)
+  * HNN SUBNET (`pHNN_SUBNET`)
     * see: https://arxiv.org/abs/2305.01338
 * Connection to [`nonlinear_benchmarks`](https://github.com/GerbenBeintema/nonlinear_benchmarks) such that benchmarks can easily be loaded and evaluated on.
 * Low amount of code such that it can be easily forked and edited to add missing features.

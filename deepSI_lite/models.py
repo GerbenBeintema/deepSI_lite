@@ -261,11 +261,11 @@ class CNN_SUBNET(SUBNET):
         super().__init__(nu, ny, norm, nx, nb, na, f, h, encoder, validate=False)
 
 ##########################
-####### HNN_SUBNET #######
+####### pHNN_SUBNET #######
 ##########################
 
 from deepSI_lite.networks import Ham_converter, ELU_lower_bound, Skew_sym_converter, Sym_pos_semidef_converter, Matrix_converter
-class HNN_SUBNET(Custom_SUBNET_CT):
+class pHNN_SUBNET(Custom_SUBNET_CT):
     def __init__(self, nu, ny, norm, nx, na, nb, Hnet=None, Jnet=None, \
                  Rnet=None, Gnet=None, encoder=None, integrator=None, tau=None):
         super().__init__()
