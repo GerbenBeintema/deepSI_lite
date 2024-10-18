@@ -3,3 +3,4 @@ deepSI_lite.egg-info/
 testing/
 .ipynb_checkpoints/
 examples/.ipynb_checkpoints/
+examples/f.onnx

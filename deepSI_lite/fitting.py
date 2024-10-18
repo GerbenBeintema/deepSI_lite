@@ -35,24 +35,38 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
         batch_size:int=256, stride:int=1, val_freq:int=250, optimizer:optim.Optimizer=None, \
             device=None, compile_mode=None, loss_fun=compute_NMSE, val_fun=compute_NMSE):
     """
-    Trains a PyTorch model (e.g. a SUBNET model).
+    Trains a PyTorch model, saving the best model and tracking training/validation progress.
 
     Args:
-        model (nn.Module): The neural network model to be trained. This network needs to have a method of `.create_arrays(train, T, stride)` such that the training arrays can be created
-        train (Input_output_data): Training data.
-        val (Input_output_data): Validation data.
-        n_its (int): Number of training iterations (i.e. batch updates).
-        T (int, optional): Sequence length considerd in the loss (unroll lenght). Default is 50.
-        batch_size (int, optional): Size of training batches. Default is 256.
-        stride (int, optional): Stride for data batching. Default is 1.
-        val_freq (int, optional): Validation frequency (in iterations). Default is 250.
-        optimizer (optim.Optimizer, optional): Optimizer for training. Default is Adam.
-        loss_fun (callable, optional): Loss function. Default is compute_NMSE.
-        val_fun (callable, optional): Validation function. Default is compute_NMSE.
+        model (nn.Module): Neural network model to be trained. The model must implement a 
+            `.create_arrays(train, T, stride)` method to generate training arrays.
+        train (Input_output_data): Training dataset.
+        val (Input_output_data): Validation dataset.
+        n_its (int): Number of training iterations (i.e., batch updates).
+        T (int, optional): Sequence length considered in the loss (unroll length). Default is 50.
+        batch_size (int, optional): Number of samples per batch during training. Default is 256.
+        stride (int, optional): Step size for generating batches from the data. Default is 1.
+        val_freq (int, optional): Frequency of validation checks (in iterations). Default is 250.
+        optimizer (optim.Optimizer, optional): Optimizer for training. Default is Adam if not provided.
+        device (torch.device, optional): Device to move the model and data to (e.g., 'cpu', 'cuda').
+        compile_mode (optional): Optional mode for torch.compile to optimize the training step.
+        loss_fun (callable, optional): Loss function used for training. Default is `compute_NMSE`.
+        val_fun (callable, optional): Function used to compute validation loss. Default is `compute_NMSE`.
 
     Returns:
-        dict: Contains the best model and optimizer states, and training/validation loss histories.
+        dict: Contains the following keys:
+            - 'best_model': The best model (with the lowest validation loss).
+            - 'best_optimizer_state': Optimizer state when the best model was found.
+            - 'last_model': The model at the end of training.
+            - 'last_optimizer_state': The optimizer state at the end of training.
+            - 'NRMS_train': Training loss history (normalized root mean square error).
+            - 'NRMS_val': Validation loss history (normalized root mean square error).
+            - 'samples/sec': Number of data samples processed per second.
+            - 'val_freq': Validation frequency.
+            - 'batch_size': Batch size used during training.
+            - 'it_counter': List of iteration counts corresponding to each validation point.
     """
+
     def train_step(model, batch, optimizer):
         def closure(backward=True):
             loss = loss_fun(model, *batch)
@@ -67,6 +81,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     
     code = token_urlsafe(4).replace('_','0').replace('-','a')
     save_filename = os.path.join(get_checkpoint_dir(), f'{model.__class__.__name__}-{code}.pth')
+    fit_info = {'val_freq': val_freq, 'batch_size':batch_size}
     
     # Creat optimizer
     model.to(device)
@@ -80,6 +95,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     # Create validation arrays
     arrays_val, indices = model.create_arrays(val, T='sim')
     arrays_val = [array_val[indices].to(device) for array_val in arrays_val]
+    
 
     # Initalize all the monitors and best found models
     best_val, best_model, best_optimizer_state, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer.state_dict()), float('nan')
@@ -88,14 +104,19 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
         progress_bar = tqdm(range(n_its))
         for it_count, batch in zip(progress_bar, itter):
             ### Validation and printing step ###
-            if it_count%val_freq==0: 
+            if it_count%val_freq==0: #make this an or last iteration?
                 with torch.no_grad(): NRMS_val.append((val_fun(model, *arrays_val)).cpu().numpy()**0.5)
                 NRMS_train.append((loss_acc/val_freq)**0.5)
                 if NRMS_val[-1]<=best_val:
                     best_val, best_model, best_optimizer_state = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
-                cloudpickle.dump({'NRMS_val':np.array(NRMS_val),'last_model':deepcopy(model).cpu(), 'best_model':best_model, \
-                                  'best_optimizer_state':best_optimizer_state, 'NRMS_train': np.array(NRMS_train), 'val_freq': val_freq, \
-                                  'last_optimizer_state':optimizer.state_dict(), 'samples/sec': (it_count*batch_size/time_usage_train if time_usage_train>0 else None)}, \
+                
+                #saving fit results
+                samps_per_sec = it_count*batch_size/time_usage_train if time_usage_train>0 else None
+
+                cloudpickle.dump({'best_model': best_model,            'best_optimizer_state':best_optimizer_state,\
+                                  'last_model': deepcopy(model).cpu(), 'last_optimizer_state':optimizer.state_dict(),\
+                                  'NRMS_train': np.array(NRMS_train),  'NRMS_val':np.array(NRMS_val),\
+                                  'samples/sec': samps_per_sec, **fit_info, 'it_counter' : np.arange(len(NRMS_val))*val_freq},\
                                   open(save_filename,'wb'))
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage_train if time_usage_train>0 else float("nan")):.2f} samps/sec')
                 loss_acc = 0.
@@ -113,8 +134,11 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
             progress_bar.set_description(f'Sqrt loss: {loss**0.5:.5f}', refresh=False)
     except KeyboardInterrupt:
         print('Stopping early due to KeyboardInterrupt')
+    d = cloudpickle.load(open(save_filename,'rb')) #save the last model to disk
+    d['last_model'], d['last_optimizer_state'] = deepcopy(model).cpu(), optimizer.state_dict()
+    cloudpickle.dump(d, open(save_filename,'wb'))
     model.load_state_dict(best_model.state_dict()); model.cpu()
-    return cloudpickle.load(open(save_filename,'rb'))
+    return d
 
 
 def get_checkpoint_dir():
@@ -142,24 +166,23 @@ def get_checkpoint_dir():
     return checkpoints_dir
 
 
-def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: Input_output_data, n_its: int, 
-        T: int = 50, stride: int = 1, batch_size: int = 256, val_freq: int = 250, 
-        optimizer: optim.Optimizer = None, loss_fun = compute_NMSE):
+def fit_minimal_implementation(model: nn.Module, train: Input_output_data,
+    val: Input_output_data, n_its: int, T: int = 50, stride: int = 1, batch_size: int = 256,
+    val_freq: int = 250, optimizer: optim.Optimizer = None, loss_fun=compute_NMSE):
 
-    optimizer = torch.optim.Adam(model.parameters()) if optimizer is None else optimizer
-    arrays, indices = model.create_arrays(train, T=T, stride=stride)  # Training data with T and stride
-    itter = data_batcher(*arrays, batch_size=batch_size, indices=indices)  # Data batches
-    arrays_val, indices = model.create_arrays(val, T=T)  # Validation data
-    arrays_val = [a[indices] for a in arrays_val]
+    optimizer = optimizer or torch.optim.Adam(model.parameters())
+    arrays, indices = model.create_arrays(train, T=T, stride=stride)
+    itter = data_batcher(*arrays, batch_size=batch_size, indices=indices)
+    arrays_val, val_indices = model.create_arrays(val, T=T)
+    arrays_val = [a[val_indices] for a in arrays_val]
     
-    best_val, best_model = float('inf'), deepcopy(model.state_dict())  # Track the best model
-    
+    best_val, best_model = float('inf'), deepcopy(model.state_dict())
+
     for it_count, batch in zip(tqdm(range(n_its)), itter):
         if it_count % val_freq == 0:  # Validation step
-            val_loss = loss_fun(model, *arrays_val).detach().numpy()**0.5
-            if val_loss <= best_val: #save best model if a new best validation loss has been obtained
+            val_loss = loss_fun(model, *arrays_val).sqrt().item()
+            if val_loss <= best_val:
                 best_val, best_model = val_loss, deepcopy(model.state_dict())
-
             print(f'Iter {it_count:7,}, Val Loss: {val_loss:.5f}')
         
         # Training step
@@ -168,6 +191,5 @@ def fit_minimal_implementation(model: nn.Module, train: Input_output_data, val: 
         loss.backward()
         optimizer.step()
 
-    model.load_state_dict(best_model)  # Load the best model
+    model.load_state_dict(best_model)
     return best_model
-

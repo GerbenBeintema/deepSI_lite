@@ -1,5 +1,5 @@
 
-import nonlinear_benchmarks
+import nonlinear_benchmarks as nlb
 import numpy as np
 import torch
 
@@ -50,7 +50,19 @@ class Norm:
     def f_CT(self, fun, tau):
         return IO_normalization_f_CT(fun, self.umean, self.ustd, tau)
 
-def get_nu_ny_and_auto_norm(data: nonlinear_benchmarks.Input_output_data | list):
+    def transform(self, dataset : nlb.Input_output_data | list):
+        if isinstance(dataset, (list, tuple)):
+            return [self.transform(d) for d in dataset]
+        u = (dataset.u - self.umean.numpy())/self.ustd.numpy()
+        y = (dataset.y - self.ymean.numpy())/self.ystd.numpy()
+        return nlb.Input_output_data(u,y,sampling_time=dataset.sampling_time, name=f'{dataset.name}-normed')
+
+    def __repr__(self):
+        return (f"Norm(umean={self.umean.numpy()}, ustd={self.ustd.numpy()}, "
+                f"ymean={self.ymean.numpy()}, ystd={self.ystd.numpy()}, "
+                f"sampling_time={self.sampling_time.numpy()})")
+
+def get_nu_ny_and_auto_norm(data: nlb.Input_output_data | list):
     if not isinstance(data, list):
         data = [data]
     u = np.concatenate([d.u for d in data],axis=0)

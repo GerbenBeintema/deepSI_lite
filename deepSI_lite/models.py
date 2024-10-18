@@ -220,12 +220,12 @@ def validate_custom_SUBNET_structure(model):
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
     def __init__(self, nu, ny, norm:Norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
-        if np.any(10*abs(norm.y0)>norm.ystd) or np.any(10*abs(norm.umean)>norm.ustd):
+        if n_schedual.any(10*abs(norm.y0)>norm.ystd) or n_schedual.any(10*abs(norm.umean)>norm.ustd):
             from warnings import warn
             warn('SUBNET_LPV assumes that the data is approximatly zero mean. Not doing so can lead to unintended behaviour.')
         assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough, 'SUBNET_LPV requires the input, output schedualing parameter to be vectors and feedthrough to be present'
         super().__init__()
-        self.nu, self.ny, self.norm, self.nx, self.np, self.na, self.nb, self.feedthrough = nu, ny, norm, nx, n_schedual, na, nb, feedthrough
+        self.nu, self.ny, self.norm, self.nx, self.n_schedual, self.na, self.nb, self.feedthrough = nu, ny, norm, nx, n_schedual, na, nb, feedthrough
         self.A = A if A is not None else Bilinear(n_in=nx, n_out=nx, n_schedual=n_schedual)
         self.B = B if B is not None else Bilinear(n_in=nu, n_out=nx, n_schedual=n_schedual, std_input=norm.ustd)
         self.C = C if C is not None else Bilinear(n_in=nx, n_out=ny, n_schedual=n_schedual, std_output=norm.ystd)
@@ -235,8 +235,6 @@ class SUBNET_LPV(Custom_SUBNET):
         validate_custom_SUBNET_structure(self) #does checks if forward is working as intended
     
     def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor=None):
-        # is a function of upast, ypast and ufuture -> yfuture_sim_pred
-        
         mv = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
         yfuture_sim = []
         x = self.encoder(upast, ypast)
@@ -247,6 +245,7 @@ class SUBNET_LPV(Custom_SUBNET):
             x = mv(A, x) + mv(B, u)
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
+
 
 ##########################
 ####### CNN_SUBNET #######
@@ -260,9 +259,9 @@ class CNN_SUBNET(SUBNET):
         encoder = norm.encoder(CNN_encoder(nb, nu, na, ny, nx))
         super().__init__(nu, ny, norm, nx, nb, na, f, h, encoder, validate=False)
 
-##########################
+###########################
 ####### pHNN_SUBNET #######
-##########################
+###########################
 
 from deepSI_lite.networks import Ham_converter, ELU_lower_bound, Skew_sym_converter, Sym_pos_semidef_converter, Matrix_converter
 class pHNN_SUBNET(Custom_SUBNET_CT):
