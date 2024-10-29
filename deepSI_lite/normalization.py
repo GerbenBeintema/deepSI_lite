@@ -63,7 +63,7 @@ class Norm:
                 f"sampling_time={self.sampling_time.numpy()})")
 
 def get_nu_ny_and_auto_norm(data: nlb.Input_output_data | list):
-    if not isinstance(data, list):
+    if not isinstance(data, (tuple, list)):
         data = [data]
     u = np.concatenate([d.u for d in data],axis=0)
     y = np.concatenate([d.y for d in data],axis=0)

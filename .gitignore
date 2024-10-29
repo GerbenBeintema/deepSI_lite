@@ -4,3 +4,4 @@ testing/
 .ipynb_checkpoints/
 examples/.ipynb_checkpoints/
 examples/f.onnx
+examples/model*

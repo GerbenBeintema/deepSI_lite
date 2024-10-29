@@ -11,13 +11,13 @@ from warnings import warn
 
 def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
     if T=='sim':
-        if isinstance(data, list):
+        if isinstance(data, (tuple,list)):
             assert all(len(data[0])==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
             T = len(data[0]) - max(na, nb)
         else:
             T = len(data) - max(na, nb)
     
-    if isinstance(data, list):
+    if isinstance(data, (tuple,list)):
         u, y = np.concatenate([di.u for di in data], dtype=np.float32), np.concatenate([di.y for di in data], dtype=np.float32) #this always creates a copy
     else:
         u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False)
@@ -33,7 +33,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
     upast = window(u[npast-nb:len(u)-T], window_shape=nb)
     ypast = window(y[npast-na:len(y)-T], window_shape=na)
 
-    if isinstance(data, list):
+    if isinstance(data, (tuple,list)):
         acc_L, ids = 0, []
         for d in data:
             assert len(d.u)>=npast+T, f'some dataset was shorter than the length required by {max(na,nb)+T=} {len(d.u)=}'
@@ -47,7 +47,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
     if not add_sampling_time:
         return (s(upast), s(ypast), s(ufuture), s(yfuture)), ids #this could return all the valid indicies
     else:
-        if isinstance(data, list):
+        if isinstance(data, (tuple,list)):
             sampling_time = torch.cat([torch.as_tensor(d.sampling_time,dtype=torch.float32)*torch.ones(len(d)) for d in data])[:len(upast)]
         else:
             sampling_time = torch.as_tensor(data.sampling_time,dtype=torch.float32)*torch.ones(len(upast))

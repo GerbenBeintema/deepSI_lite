@@ -29,29 +29,29 @@ pip install git+https://github.com/GerbenBeintema/deepSI_lite@main
 ## Example usage
 
 ```python
-import nonlinear_benchmarks
+import nonlinear_benchmarks as nlb
+import deepSI_lite as dsi
 
 # get benchmark data:
-train_val, test = nonlinear_benchmarks.WienerHammerBenchMark()
-train, val = train_val[:int(len(train_val)*0.99)], train_val[int(len(train_val)*0.99):] #split train and val
+train_val, test = nlb.WienerHammerBenchMark()
+split_id = int(len(train_val)*0.99)
+train, val = train_val[:split_id], train_val[split_id:] #split train and val
 # alternative:
-#train_val = nonlinear_benchmarks.Input_output_data(u=..., y=..., sampling_time=...)
+#train_val = dsi.Input_output_data(u=..., y=..., sampling_time=...)
 
 # charaterize data (number of input nu, number of output ny and the norm)
-from deepSI_lite.normalization import get_nu_ny_and_auto_norm
-nu, ny, norm = get_nu_ny_and_auto_norm(train_val)
+nu, ny, norm = dsi.get_nu_ny_and_auto_norm(train_val)
 
 # create a SUBNET model
-from deepSI_lite.models import SUBNET
-nx = 6
-model = SUBNET(nu, ny, norm=norm, nx=nx, nb=40, na=40) #MLP 2 hidden layer for all three components
+model = dsi.SUBNET(nu, ny, norm=norm, nx=6, nb=40, na=40) #MLP 2 hidden layer for all three components
 
-# optimize using NRMSE and stochastic gradient descent.
-from deepSI_lite.fitting import fit
-train_dict = fit(model, train, val, n_its=10_000, T=80, batch_size=128, stride=1, val_freq=100)
+# optimize using NRMSE and stochastic gradient descent (Adam).
+train_dict = dsi.fit(model, train, val, n_its=10_000, T=80, batch_size=128, val_freq=100) #only 10K iterations for example (1M closer to optimal)
 
-test_p = model.simulate(test)
-print(f'RMS = {((test.y[model.na:] - test_p.y[model.na:])**2).mean()**0.5:.5f}')
+#simulate the model
+test_p = model.simulate(test) 
+k0 = max(model.na, model.nb) #split off the encoder lenght
+print(f'RMS = {((test.y[k0:] - test_p.y[k0:])**2).mean()**0.5:.5f} V ')
 ```
 
 ## Futher documentation

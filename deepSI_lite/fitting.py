@@ -98,28 +98,30 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     
 
     # Initalize all the monitors and best found models
-    best_val, best_model, best_optimizer_state, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer.state_dict()), float('nan')
+    best_val, best_model, best_optimizer_state, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer.state_dict()), []
     NRMS_val, NRMS_train, time_usage_train = [], [], 0. #initialize the train and val monitor
     try:
-        progress_bar = tqdm(range(n_its))
+        progress_bar = tqdm(range(n_its + 1))
         for it_count, batch in zip(progress_bar, itter):
             ### Validation and printing step ###
             if it_count%val_freq==0: #make this an or last iteration?
                 with torch.no_grad(): NRMS_val.append((val_fun(model, *arrays_val)).cpu().numpy()**0.5)
-                NRMS_train.append((loss_acc/val_freq)**0.5)
+                NRMS_train.append((np.mean(loss_acc) if len(loss_acc)>0 else float('nan'))**0.5)
+                loss_acc = []
+
                 if NRMS_val[-1]<=best_val:
                     best_val, best_model, best_optimizer_state = NRMS_val[-1], deepcopy(model).cpu(), deepcopy(optimizer.state_dict()) #does this work nicely with device?
                 
                 #saving fit results
                 samps_per_sec = it_count*batch_size/time_usage_train if time_usage_train>0 else None
-
                 cloudpickle.dump({'best_model': best_model,            'best_optimizer_state':best_optimizer_state,\
                                   'last_model': deepcopy(model).cpu(), 'last_optimizer_state':optimizer.state_dict(),\
                                   'NRMS_train': np.array(NRMS_train),  'NRMS_val':np.array(NRMS_val),\
                                   'samples/sec': samps_per_sec, **fit_info, 'it_counter' : np.arange(len(NRMS_val))*val_freq},\
                                   open(save_filename,'wb'))
                 print(f'it {it_count:7,} NRMS loss {NRMS_train[-1]:.5f} NRMS val {NRMS_val[-1]:.5f}{"!!" if NRMS_val[-1]==best_val else "  "} {(it_count*batch_size/time_usage_train if time_usage_train>0 else float("nan")):.2f} samps/sec')
-                loss_acc = 0.
+            
+            if it_count==n_its: break #break upon the final iteration such to skip the added iteration
 
             ### Train Step ###
             start_t = time.time()
@@ -130,7 +132,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
             if np.isnan(loss):
                 print('!!!!!!!!!!!!! Loss became NaN and training will be stopped !!!!!!!!!!!!!!')
                 break
-            loss_acc += loss # add the loss the the loss accumulator
+            loss_acc.append(loss) # add the loss the the loss accumulator
             progress_bar.set_description(f'Sqrt loss: {loss**0.5:.5f}', refresh=False)
     except KeyboardInterrupt:
         print('Stopping early due to KeyboardInterrupt')
