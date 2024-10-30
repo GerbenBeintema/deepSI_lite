@@ -205,10 +205,11 @@ def validate_custom_SUBNET_structure(model):
         upast_test =  v(batch_size, nb) if nu=='scalar' else v(batch_size, nb, nu)
         ypast_test = v(batch_size, na) if ny=='scalar' else v(batch_size, na, ny)
         ufuture_test = v(batch_size, T) if nu=='scalar' else v(batch_size, T, nu)
+        yfuture_test = v(batch_size, T) if ny=='scalar' else v(batch_size, T, ny)
 
         with torch.no_grad():
             if isinstance(model, Custom_SUBNET):
-                yfuture_pred = model(upast_test, ypast_test, ufuture_test)
+                yfuture_pred = model(upast_test, ypast_test, ufuture_test, yfuture_test)
             else:
                 yfuture_pred = model(upast_test, ypast_test, ufuture_test, v(batch_size))
             assert yfuture_pred.shape==((batch_size,T) if ny=='scalar' else (batch_size,T,ny))
@@ -220,10 +221,10 @@ def validate_custom_SUBNET_structure(model):
 from deepSI_lite.networks import Bilinear
 class SUBNET_LPV(Custom_SUBNET):
     def __init__(self, nu, ny, norm:Norm, nx, n_schedual, na, nb, scheduling_net=None, A=None, B=None, C=None, D=None, encoder=None, feedthrough=True):
-        if n_schedual.any(10*abs(norm.y0)>norm.ystd) or n_schedual.any(10*abs(norm.umean)>norm.ustd):
+        if np.any(10*abs(norm.ymean.numpy())>norm.ystd.numpy()) or np.any(10*abs(norm.umean.numpy())>norm.ustd.numpy()):
             from warnings import warn
             warn('SUBNET_LPV assumes that the data is approximatly zero mean. Not doing so can lead to unintended behaviour.')
-        assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough, 'SUBNET_LPV requires the input, output schedualing parameter to be vectors and feedthrough to be present'
+        assert isinstance(nu, int) and isinstance(ny, int) and isinstance(n_schedual, int) and feedthrough, 'SUBNET_LPV requires the input, output and schedualing parameter to be vectors and feedthrough to be present'
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.n_schedual, self.na, self.nb, self.feedthrough = nu, ny, norm, nx, n_schedual, na, nb, feedthrough
         self.A = A if A is not None else Bilinear(n_in=nx, n_out=nx, n_schedual=n_schedual)
@@ -246,6 +247,27 @@ class SUBNET_LPV(Custom_SUBNET):
             yfuture_sim.append(y)
         return torch.stack(yfuture_sim, dim=1)
 
+
+class SUBNET_LPV_ext_scheduled(SUBNET_LPV):
+    '''LPV system identification approach LPVSUBNET with external scheduling as seen in Fig. 2 in https://arxiv.org/pdf/2204.04060'''
+    def forward(self, upast: torch.Tensor, ypast: torch.Tensor, ufuture: torch.Tensor, yfuture: torch.Tensor):
+        Nbatch, T = ufuture.shape[:2]
+        #upasts = [upast_k, upast_k+1, u_past_k+2,...] ect
+        upasts = torch.cat([upast, ufuture[:,:-1]], dim=1).unfold(1,self.nb,1).permute(0,1,3,2).flatten(start_dim=0, end_dim=1) #(Nbatch * T, nb, nu)
+        ypasts = torch.cat([ypast, yfuture[:,:-1]], dim=1).unfold(1,self.na,1).permute(0,1,3,2).flatten(start_dim=0, end_dim=1) #(Nbatch * T, na, ny)
+
+        x_long = torch.unflatten(self.encoder(upasts, ypasts), dim=0, sizes=(Nbatch, T)) #use encoder to estimate all the initial state in the future
+        pfuture = torch.unflatten(self.scheduling_net(x_long.flatten(0,1), ufuture.flatten(0,1)), dim=0, sizes=(Nbatch, T)) #construct scheduling parameters
+        x = x_long[:,0] #set initial state equal to the first of the inital states computed
+
+        mv = lambda A, x: torch.bmm(A, x[:, :, None])[:,:,0] #batched matrix vector multiply
+        yfuture_sim = []
+        for p, u in zip(pfuture.swapaxes(0,1), ufuture.swapaxes(0,1)): #iterate over time
+            A, B, C, D = self.A(p), self.B(p), self.C(p), self.D(p)
+            y = mv(C, x) + mv(D, u)
+            x = mv(A, x) + mv(B, u)
+            yfuture_sim.append(y)
+        return torch.stack(yfuture_sim, dim=1)
 
 ##########################
 ####### CNN_SUBNET #######

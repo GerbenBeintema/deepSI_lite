@@ -12,7 +12,7 @@ deepSI\_lite provides a lightweight pytorch based framework for data-driven lear
   * Base class for fully custom SUBNET structures with shared parameters between `f`, `h` or `encoder`. (`deepSI_lite.models.Custom_SUBNET`)
   * CNN SUBNET (`CNN_SUBNET`)
     * see chapter 4: https://research.tue.nl/files/318935789/20240321_Beintema_hf.pdf
-  * LPV SUBNET (`SUBNET_LPV`)
+  * LPV SUBNET (`SUBNET_LPV` and `SUBNET_LPV_ext_scheduled`)
     * see: https://arxiv.org/abs/2204.04060
   * HNN SUBNET (`pHNN_SUBNET`)
     * see: https://arxiv.org/abs/2305.01338
@@ -60,11 +60,12 @@ Check out `examples/Demonstration deepSI_lite.ipynb`.
 
 ## todo list and known issues
 
-* Known issues: The compile option in `fit` currently has a memory leak
-* Expand demonstration notebook
+* Known issues: The compile option in `fit` currently has a memory leak??
+* Expand demonstration notebook with pHNN examples
+* LPV SUBNET with exernal schedualing.
 * General documentation 
 * known issues: CT SUBNET and DT SUBNET does not produce the correct initial when the sampling time is altered. (the encoder assumes that the sampling time does not change)
 * Streamline the user experiance when a model only has been implemented for MIMO and a SISO dataset is given.
-* Streamline the ONNX exporting such that the estimated models can be easily loaded in for instance in MATLAB
 * Change name from `deepSI_lite` -> `deepSI` 
 * pypi data upload such that it can be easily installed with `pip install deepSI_lite`
+* Improve speed with copy if enough memory is available. Also pre-transfer to GPU and maybe asyncroness getting of arrays.

@@ -13,7 +13,7 @@ def compute_NMSE(*A) -> torch.Tensor:
     '''Computes the Normalized Mean Squared Error. 
     Example usage: compute_NMSE(model, *xarrays, yarray) or compute_NMSE(model, upast, ypast, ufuture, yfuture)'''
     model, *xarrays, yarray = A
-    yout = model(*xarrays)
+    yout = model(*xarrays, yarray)
     return torch.mean((yout-yarray)**2/model.norm.ystd**2)
 
 def data_batcher(*arrays, batch_size=256, seed=0, device=None, indices=None):
@@ -101,7 +101,7 @@ def fit(model: nn.Module, train:Input_output_data, val:Input_output_data, n_its:
     best_val, best_model, best_optimizer_state, loss_acc = float('inf'), deepcopy(model), deepcopy(optimizer.state_dict()), []
     NRMS_val, NRMS_train, time_usage_train = [], [], 0. #initialize the train and val monitor
     try:
-        progress_bar = tqdm(range(n_its + 1))
+        progress_bar = tqdm(range(n_its + 1), total=n_its)
         for it_count, batch in zip(progress_bar, itter):
             ### Validation and printing step ###
             if it_count%val_freq==0: #make this an or last iteration?

@@ -7,6 +7,10 @@ from torch import nn
 ###########################################################
 
 class MLP_res_net(nn.Module):
+    '''Multi-Layer Perceptron with Residual Connection (MLP_res_net) as follows:
+              y_pred = net(input) = net_MLP(input) + A * input
+    
+    '''
     def __init__(self, input_size, output_size, n_hidden_layers = 2, n_hidden_nodes = 64, \
                  activation=nn.Tanh, zero_bias=True):
         self.input_size = input_size
@@ -351,7 +355,7 @@ class CNN_encoder(nn.Module):
 ################ HNN SUBNET function #######################
 ############################################################
 
-class ELU_lower_bound(nn.Module): #is used 
+class ELU_lower_bound(nn.Module): 
     def __init__(self, net, lower_bound=-10): #-10 such that the gradient is not suppressed near zero
         super(ELU_lower_bound, self).__init__()
         self.net = net
