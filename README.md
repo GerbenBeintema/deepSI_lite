@@ -22,20 +22,21 @@ data = dsi.Input_output_data(u=ulist, y=np.array(ylist))
 train, val, test  = data[:8000], data[8000:9000], data[9000:]
 
 # Create model
-nu, ny, norm = dsi.get_nu_ny_and_auto_norm(data) #characterize data (i.e. number inputs, number outputs, range of input and output (norm))
-model = dsi.SUBNET(nu, ny, norm, nx=2, nb=20, na=20) #creates the encoder, f and h as fully connected neural networks.
+nu, ny, norm = dsi.get_nu_ny_and_auto_norm(data) # Characterize data
+model = dsi.SUBNET(nu, ny, norm, nx=2, nb=20, na=20) # Creates encoder, f and h as MLP
 
-# Train model on data
-train_dict = dsi.fit(model, train, val, n_its=10_000, T=20, batch_size=256, val_freq=100) #Adam optimization
+# Train model on data using Adam
+train_dict = dsi.fit(model, train, val, n_its=10_000, T=20, batch_size=256, val_freq=100)
 
 # Simulate model on the test input sequence
 test_p = model.simulate(test)
 
-# Visualize resulting model
+# Visualize simulation of the model
 from matplotlib import pyplot as plt
 plt.figure(figsize=(7,3))
-plt.plot(test.y, label='real')
-plt.plot(test_p.y, label=f'model NRMS = ({((test.y-test_p.y)**2).mean()**0.5/test.y.std():.2%})')
+plt.plot(test.y, label='Real')
+plt.plot(test_p.y, label=f'Model NRMS = ({((test.y-test_p.y)**2).mean()**0.5/test.y.std():.2%})')
+plt.title('Comparison of Real Data and Model Simulation', fontsize=14, fontweight='bold')
 plt.legend(); plt.xlabel('time index'); plt.ylabel('y'); plt.grid(); plt.tight_layout(pad=0.5)
 plt.show()
 ```
