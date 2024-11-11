@@ -9,7 +9,33 @@ import numpy as np
 from deepSI_lite.normalization import Norm
 from warnings import warn
 
-def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add_sampling_time=False):
+def past_future_arrays(data : Input_output_data | list, na : int, nb : int, T : int | str, stride : int=1, add_sampling_time=False):
+    '''
+    This function extracts sections from the givne data as to be used in the SUBNET structure in the format (upast, ypast, ufuture, yfuture), ids. 
+    
+    For example for a sample [t] you will find that:
+    npast = max(na,nb)
+    upast[t] =   data.u[t-nb + npast : t   + npast]
+    ypast[t] =   data.y[t-na + npast : t   + npast]
+    ufuture[t] = data.u[t    + npast : t+T + npast]
+    yfuture[t] = data.y[t    + npast : t+T + npast]
+
+    where it can thus be used as:
+       net(upast, ypast, ufuture) = y_future_sim 
+
+    Parameters:
+    - data (Input_output_data | list): Input-output data object or a list of such objects, each containing input `u` and output `y` arrays.
+    - na (int): Number of past output time steps to include in the `ypast` array.
+    - nb (int): Number of past input time steps to include in the `upast` array.
+    - T (int or str): Length of future time window (`ufuture`, `yfuture`). If 'sim', uses the full length of the input data.
+    - stride (int, optional): Step size for moving window across data (default is 1).
+    - add_sampling_time (bool, optional): If True, includes a `sampling_time` array, representing sampling intervals (default is False).
+
+    Returns:
+    - Tuple of Tensors: `(upast, ypast, ufuture, yfuture, [optional sampling_time])` where each array is shaped for efficient batch training.
+    - ids (Tensor): Indices for valid data samples, adjusted to avoid overlap when data is a list.
+    '''
+
     if T=='sim':
         if isinstance(data, (tuple,list)):
             assert all(len(data[0])==len(d) for d in data), "if T='sim' than all given datasets need to have the same lenght (you should create the arrays in for loop instead)"
@@ -23,7 +49,7 @@ def past_future_arrays(data : Input_output_data | list, na, nb, T, stride=1, add
         u, y = data.u.astype(np.float32, copy=False), data.y.astype(np.float32, copy=False)
 
     def window(x,window_shape=T): 
-        x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True)
+        x = np.lib.stride_tricks.sliding_window_view(x, window_shape=window_shape,axis=0, writeable=True) #this windowing function does not increase the amount of data used.
         s = (0,len(x.shape)-1) + tuple(range(1,len(x.shape)-1))
         return x.transpose(s)
 
@@ -77,7 +103,7 @@ def validate_SUBNET_structure(model):
             raise NotImplementedError(f'model validation of type {model} cannot be validated yet')
 
 class SUBNET(nn.Module):
-    def __init__(self, nu, ny, norm : Norm, nx=10, nb=20, na=20, \
+    def __init__(self, nu:int|str, ny:int|str, norm : Norm, nx:int=10, nb:int=20, na:int=20, \
                  f=None, h=None, encoder=None, feedthrough=False, validate=True) -> None:
         super().__init__()
         self.nu, self.ny, self.norm, self.nx, self.nb, self.na, self.feedthrough = nu, ny, norm, nx, nb, na, feedthrough
@@ -111,7 +137,7 @@ class SUBNET(nn.Module):
 
         #compute output at all the future time indecies at the same time by combining the time and batch dim.
         fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim (Nbatch, Ntime, ...) -> (Nbatch*Ntim, ...)
-        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture)) #compute the output for all time and and batches in one go
         return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T, ...) -> (Nbatch, T, ...)
 
     def simulate(self, data: Input_output_data | list):
@@ -156,7 +182,7 @@ class SUBNET_CT(nn.Module):
 
         #compute output at all the future time indecies at the same time by combining the time and batch dim.
         fl = lambda ar: torch.flatten(ar, start_dim=0, end_dim=1) #conbine batch dim and time dim 
-        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture))
+        yfuture_sim_flat = self.h(fl(xfuture), fl(ufuture)) if self.feedthrough else self.h(fl(xfuture)) #compute the output for all time and and batches in one go
         return torch.unflatten(yfuture_sim_flat, dim=0, sizes=(B,T)) #(Nbatch*T) -> (Nbatch, T)
     
     def simulate(self, data: Input_output_data | list):
@@ -301,6 +327,17 @@ class pHNN_SUBNET(Custom_SUBNET_CT):
         self.encoder = norm.encoder(MLP_res_net(input_size = [(nb,nu) , (na,ny)], output_size = nx)) if encoder is None else encoder
         self.norm = norm
         self.tau = norm.sampling_time*10 if tau is None else tau
+
+        #validation of structure
+        for Nbatch in [1,2]:
+            xtest = torch.randn(Nbatch, nx)
+            J_x, R_x, G_x, dHdx, H = self.get_matricies(xtest)
+            nu_val = 1 if nu=='scalar' else nu
+            assert J_x.shape == (Nbatch, nx, nx), f'Jnet(x) has the incorrect shape, expected (Nbatch={Nbatch}, nx={nx}, nx={nx}) but got Jnet(x).shape={J_x.shape}'
+            assert R_x.shape == (Nbatch, nx, nx), f'Rnet(x) has the incorrect shape, expected (Nbatch={Nbatch}, nx={nx}, nx={nx}) but got Rnet(x).shape={R_x.shape}'
+            assert H.shape == (Nbatch,), f'Hnet(x) has the incorrect shape, expected (Nbatch={Nbatch},) but got Hnet(x).shape={H.shape}'
+            assert G_x.shape == (Nbatch, nx, nu_val), f'Gnet(x) has the incorrect shape, expected (Nbatch={Nbatch}, nx={nx}, nu_val={nu_val}) but got Gnet(x).shape={G_x.shape}'
+            assert dHdx.shape == (Nbatch, nx), f'dHnet(x)/dx has the incorrect shape, expected (Nbatch={Nbatch}, nx={nx}) but got dHdx.shape={dHdx.shape}'
         validate_custom_SUBNET_structure(self)
     
     def get_matricies(self, x):

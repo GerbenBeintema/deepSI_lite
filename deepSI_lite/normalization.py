@@ -3,7 +3,7 @@ import nonlinear_benchmarks as nlb
 import numpy as np
 import torch
 
-C = lambda x: torch.as_tensor(x, dtype=torch.float32)
+C = lambda x: torch.as_tensor(x, dtype=torch.float32) if x is not None else None
 class IO_normalization_f(torch.nn.Module):
     def __init__(self, fun, umean, ustd):
         super().__init__()

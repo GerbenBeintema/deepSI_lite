@@ -9,9 +9,15 @@ from torch import nn
 class MLP_res_net(nn.Module):
     '''Multi-Layer Perceptron with Residual Connection (MLP_res_net) as follows:
               y_pred = net(input) = net_MLP(input) + A * input
-    
+              where net_MLP(input) is a simple Multi-Layer Perceptron, e.g.:
+                h_1 = input
+                h-2 = activation(A_1 h_1 + b_1) #A_1.shape = n_hidden_nodes x input_size
+                h_3 = activation(A_2 h_2 + b_2) #A_2.shape = n_hidden_nodes x n_hidden_nodes
+                ...
+                h_n_hidden_layers = activation(A_n-1 h_n-1 + b_n-1)
+                return h_n_hidden_layers
     '''
-    def __init__(self, input_size, output_size, n_hidden_layers = 2, n_hidden_nodes = 64, \
+    def __init__(self, input_size: str | int | list, output_size: str | int | list, n_hidden_layers = 2, n_hidden_nodes = 64, \
                  activation=nn.Tanh, zero_bias=True):
         self.input_size = input_size
         self.output_size = output_size
@@ -67,10 +73,10 @@ def euler_integrator(f, x, u, dt, n_steps=1):
 def rk4_integrator(f, x, u, dt, n_steps=1):
     dtp = (dt/n_steps)[:,None]
     for _ in range(n_steps): #f(x,u) has shape (nbatch, nx)
-        k1 = f(x,u)*dtp
-        k2 = f(x+k1*0.5,u)*dtp
-        k3 = f(x+k2*0.5,u)*dtp
-        k4 = f(x+k3,u)*dtp
+        k1 = dtp * f(x,u)
+        k2 = dtp * f(x+k1*0.5,u)
+        k3 = dtp * f(x+k2*0.5,u)
+        k4 = dtp * f(x+k3,u)
         x = x + (k1+2*k2+2*k3+k4)/6
     return x
 
@@ -93,9 +99,10 @@ def rk45_integrator(f, x, u, dt, n_steps=1):
 
 import numpy as np
 class Bilinear(nn.Module):
-    def __init__(self, n_in, n_out, n_schedual, std_output=None, std_input=None):
+    '''A(p) = A_0 + A_1 p_1 + A_2 p_2 + ... + A_n_schedual p_n_schedual'''
+    def __init__(self, n_in, n_out, n_schedual, std_output=None, std_input=None, scale_fac=None):
         super().__init__()
-        scale_fac = (n_in*(n_schedual+1))**0.5*10
+        scale_fac = (n_in*(n_schedual+1))**0.5*10 if scale_fac is None else scale_fac
         self.Alin = nn.Parameter(torch.randn((n_out, n_in))/scale_fac)
         self.Anlin = nn.Parameter(torch.randn((n_schedual, n_out, n_in))/scale_fac)
         self.std_output = torch.as_tensor(std_output,dtype=torch.float32) if std_output is not None else torch.ones((n_out,), dtype=torch.float32)
@@ -356,6 +363,8 @@ class CNN_encoder(nn.Module):
 ############################################################
 
 class ELU_lower_bound(nn.Module): 
+    '''Set a lower bound on a function using a ELU using:
+       torch.nn.functional.elu(y - b) + b'''
     def __init__(self, net, lower_bound=-10): #-10 such that the gradient is not suppressed near zero
         super(ELU_lower_bound, self).__init__()
         self.net = net
@@ -363,12 +372,11 @@ class ELU_lower_bound(nn.Module):
         
     def forward(self, *args, **kwargs):    
         y = self.net(*args, **kwargs)
-#         y *= args[0].shape[1]**0.5
-        # elu[y - (lower_bound + 1)] + (lower_bound + 1)
         b = self.lower_bound + 1
         return torch.nn.functional.elu(y - b) + b
 
 class Ham_converter(nn.Module): #rescales the output such that the std of dH/dx = 1
+    '''Converts a H(x) to a hamiltonian by multipying the output by sqrt(nx) which gives approximately dH/dx_i = 1'''
     def __init__(self, net, norm='auto'):
         super().__init__()
         self.net = net
@@ -381,6 +389,9 @@ class Ham_converter(nn.Module): #rescales the output such that the std of dH/dx 
             return self.net(x)*self.norm
 
 class Matrix_converter(nn.Module):
+    '''
+    Converts a net(x) vector to a matrix using a reshape
+    '''
     def __init__(self, net, nrows, ncols, norm='auto'):
         super().__init__()
         self.net = net
@@ -397,6 +408,10 @@ class Matrix_converter(nn.Module):
         return A
 
 class Skew_sym_converter(nn.Module):
+    '''converts a net(x) vector to a skew-symtreic matrix (J = -J^T) using
+        A = shape_to_matrix(net(x))
+        return A - A^T
+    '''
     def __init__(self, net, norm='auto'):
         super().__init__()
         self.net = net
@@ -415,6 +430,10 @@ class Skew_sym_converter(nn.Module):
         return J - J.permute(0,2,1)
 
 class Sym_pos_semidef_converter(nn.Module):
+    '''converts a net(x) vector to a semi-positive definite matrix using 
+        A = shape_to_matrix(net(x))
+        return A^T A
+    '''
     def __init__(self, net, norm='auto'):
         super().__init__()
         self.norm = norm
@@ -433,7 +452,7 @@ class Sym_pos_semidef_converter(nn.Module):
         return R
 
 class Bias_net(nn.Module): 
-    '''indepdent of the input but trainanble bias'''
+    '''f(x)=b is a bias (trainable)'''
     def __init__(self, num_pars, requires_grad=True):
         super().__init__()
         self.pars = nn.Parameter(torch.randn(num_pars), requires_grad=requires_grad)
@@ -442,17 +461,18 @@ class Bias_net(nn.Module):
         return torch.broadcast_to(self.pars, (args[0].shape[0], self.pars.shape[0]))  
 
 class Contant_net(nn.Module):  #todo documentation
-    '''indepdent of the input but trainanble bias'''
-    def __init__(self, y):
+    '''f(x)=c is a constant given by c'''
+    def __init__(self, c):
         super().__init__()
-        assert isinstance(y, torch.Tensor)
-        self.y = y 
+        assert isinstance(c, torch.Tensor)
+        self.c = c 
 
     def forward(self, *args, **kwargs):
-        return torch.broadcast_to(self.y, (args[0].shape[0],) + self.y.shape) 
+        return torch.broadcast_to(self.c, (args[0].shape[0],) + self.c.shape) 
 
 
 class Sum_net(nn.Module):
+    '''f_1(x) + f_2(x) + f_3(x) + ... + f_n(x)'''
     def __init__(self, nets, scaling_factors='auto'):
         super().__init__()
         self.nets = nn.ParameterList(nets)
@@ -464,6 +484,7 @@ class Sum_net(nn.Module):
 
 
 class Quadratic_net(nn.Module): 
+    '''x^T Q X'''
     def __init__(self, nx):
         super().__init__()
         self.net = Skew_sym_converter(Bias_net(nx*nx))
