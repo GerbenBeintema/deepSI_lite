@@ -34,10 +34,10 @@ test_p = model.simulate(test)
 # Visualize simulation of the model
 from matplotlib import pyplot as plt
 plt.figure(figsize=(7,3))
-plt.plot(test.y, label='Real')
-plt.plot(test_p.y, label=f'Model NRMS = ({((test.y-test_p.y)**2).mean()**0.5/test.y.std():.2%})')
+plt.plot(test.y, label='Real Data')
+plt.plot(test_p.y, label=f'Model Sim. (NRMS = {((test.y-test_p.y)**2).mean()**0.5/test.y.std():.2%})', linestyle='--')
 plt.title('Comparison of Real Data and Model Simulation', fontsize=14, fontweight='bold')
-plt.legend(); plt.xlabel('time index'); plt.ylabel('y'); plt.grid(); plt.tight_layout(pad=0.5)
+plt.legend(); plt.xlabel('Time Index'); plt.ylabel('y'); plt.grid(); plt.tight_layout(pad=0.5)
 plt.show()
 ```
 
