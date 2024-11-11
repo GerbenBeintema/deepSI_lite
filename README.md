@@ -69,7 +69,7 @@ pip install git+https://github.com/GerbenBeintema/deepSI_lite@main
 
 ## Futher documentation
 
-Check out [`examples/Demonstration deepSI_lite.ipynb`](examples/Demonstration deepSI_lite.ipynb).
+Check out [`examples/Demonstration deepSI_lite.ipynb`](examples/Demonstration%20deepSI_lite.ipynb).
 
 ## todo list and known issues
 
