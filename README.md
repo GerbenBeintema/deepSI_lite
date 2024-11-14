@@ -55,9 +55,9 @@ plt.show()
     * see chapter 4: https://research.tue.nl/files/318935789/20240321_Beintema_hf.pdf
   * LPV SUBNET (`SUBNET_LPV` and `SUBNET_LPV_ext_scheduled`)
     * see: https://arxiv.org/abs/2204.04060
-  * HNN SUBNET (`pHNN_SUBNET`)
+  * port HNN SUBNET (`pHNN_SUBNET`)
     * see: https://arxiv.org/abs/2305.01338
-* Connection to [`nonlinear_benchmarks`](https://github.com/GerbenBeintema/nonlinear_benchmarks) such that benchmarks can easily be loaded and evaluated on.
+* Connection to [`nonlinear_benchmarks`](https://github.com/GerbenBeintema/nonlinear_benchmarks) to easily load and evaluate on benchmarks.
 * Low amount of code such that it can be easily forked and edited to add missing features.
 
 ## Installation
@@ -74,7 +74,7 @@ Check out [`examples/Demonstration deepSI_lite.ipynb`](examples/Demonstration%20
 ## todo list and known issues
 
 * Expand demonstration notebook with pHNN examples
-* pHNN validation, 
+* pHNN validation
 * Issue where discrete time is printed in Input_output_data with torch.Tensors, and np.arrays sample time.
 * General documentation 
 * known issues: CT SUBNET and DT SUBNET does not produce the correct initial when the sampling time is altered. (the encoder assumes that the sampling time does not change)
