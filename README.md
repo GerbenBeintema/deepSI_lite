@@ -1,3 +1,11 @@
+# ⚠️ REPOSITORY DEPRECATION ⚠️
+
+The code of this repository has been incorporated in: 
+
+[https://github.com/MaartenSchoukens/deepSI](https://github.com/MaartenSchoukens/deepSI)
+
+So you can use that version instead of this old repository version.
+
 ## deepSI\_lite
 
 deepSI\_lite provides a lightweight pytorch based framework for data-driven learning of dynamical systems (i.e. system identification). It contains a large forcus on the SUBNET method which is able to robustly model many systems.
